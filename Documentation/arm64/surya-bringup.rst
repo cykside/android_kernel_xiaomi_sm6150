@@ -932,3 +932,13 @@ itself consumes the PHY. Remove this reverse dependency in the Surya
 trial to match the reference. Keep the host's GCC reset and dedicated
 UFS device-reset pin states. The QMP v3 driver already allows the PHY
 reset to be absent; this does not prove why the PHY was unbound.
+
+Trial ``ff9621fa8`` also did not boot and left no readable panic log.
+It does not establish whether the PHY reset change affected probe.
+The installer assembly now explicitly checks both trial dependency
+removals and the presence of the host reset, reset pin states and
+bandwidth path names in the merged DTB. These are packaging checks,
+not hardware validation. Violet's PS_HOLD option is implemented by
+qcom-pon; adding the property to a vendor qpnp-power-on node would
+not use that implementation. Do not change Surya PON ownership or
+restart-reason programming based on the Violet DT alone.

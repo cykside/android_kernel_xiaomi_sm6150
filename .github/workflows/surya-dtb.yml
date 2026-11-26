@@ -875,6 +875,19 @@ jobs:
           fdtoverlay -i "$bundle/surya-base.dtb" -o dtb "$bundle/surya-ufs.dtbo"
           test "$(fdtget -t s dtb /soc/ufshc@1d84000 status)" = okay
           test "$(fdtget -t s dtb /soc/ufsphy_mem@1d87000 status)" = okay
+          host=/soc/ufshc@1d84000
+          phy=/soc/ufsphy_mem@1d87000
+          aggre=/soc/interconnect@1700000
+          phy_properties=$(fdtget -p dtb "$phy")
+          aggre_properties=$(fdtget -p dtb "$aggre")
+          if grep -qx resets <<< "$phy_properties" || grep -qx clocks <<< "$aggre_properties"; then
+            echo '::error::Surya trial DTB retained an inherited PHY reset or QoS clock'
+            exit 1
+          fi
+          grep -qx qcom,skip-qos <<< "$aggre_properties"
+          test "$(fdtget -t s dtb "$host" reset-names)" = rst
+          test "$(fdtget -t s dtb "$host" pinctrl-names)" = 'dev-reset-assert dev-reset-deassert'
+          test "$(fdtget -t s dtb "$host" interconnect-names)" = 'ufs-ddr cpu-ufs'
           ufs_properties=$(fdtget -p dtb /soc/ufshc@1d84000)
           if grep -xE 'iommus|qcom,iommu-dma' <<< "$ufs_properties"; then
             echo '::error::Surya UFS must not inherit the SM6150 SMMU dependency'
