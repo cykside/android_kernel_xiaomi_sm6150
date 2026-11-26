@@ -300,8 +300,16 @@ jobs:
           done
           /usr/bin/python3 scripts/dtc/surya-ufs-providers.py "$dtb" > "$RUNNER_TEMP/surya-integration-ufs.txt"
           cat "$RUNNER_TEMP/surya-integration-ufs.txt"
+          for phy in /soc/qusb@88e2000 /soc/qusb@88e3000 /soc/ssphy@88e6000; do
+            test "$(fdtget -t s "$dtb" "$phy" status)" = disabled
+          done
           shared=$(grep '^  available:' "$RUNNER_TEMP/surya-integration-ufs.txt" || true)
           count=$(awk 'NF {n++} END {print n+0}' <<< "$shared")
+          if awk 'NF && $3 != "proxy-supply" {found=1} END {exit !found}' <<< "$shared"; then
+            printf '%s\n' "$shared"
+            echo 'Unexpected available consumer of an offline UFS supply' >&2
+            exit 1
+          fi
           preview=$(awk 'NF && n++ < 6 {sub(/^  available: /, ""); printf "%s; ", $0}' <<< "$shared")
           printf '::notice title=Surya shared UFS supplies::%s available supply references (first six): %s\n' "$count" "${preview//%/%25}"
           {

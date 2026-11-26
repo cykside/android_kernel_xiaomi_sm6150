@@ -598,3 +598,11 @@ reference-clock supply parser reads its DT current limit and obtains a
 regulator handle; it does not set a fixed 1.2 V in that parser. Review
 available proxy and other consumers before changing the provider's
 initial voltage. An available DT node is not proof of an active vote.
+
+CI run ``45802353483`` found five available references in the
+integration fixture: two RPMh proxy references and three USB PHY
+``vdd-supply`` references to L4. The USB controllers were disabled but
+their PHYs were still independently available. The offline UFS fixture
+now disables those PHYs too and checks for non-proxy references to its
+UFS supplies. Proxy behavior still needs validation. The primary Surya
+DTB retains its existing USB and regulator configuration.

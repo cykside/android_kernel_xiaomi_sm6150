@@ -23,3 +23,16 @@
 	regulator-max-microvolt = <1256000>;
 	qcom,init-voltage = <1144000>;
 };
+
+/* The USB controllers are already disabled; isolate their PHY votes too. */
+&qusb_phy0 {
+	status = "disabled";
+};
+
+&usb_qmp_phy {
+	status = "disabled";
+};
+
+&qusb_phy1 {
+	status = "disabled";
+};
