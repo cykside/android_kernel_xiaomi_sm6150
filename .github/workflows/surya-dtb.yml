@@ -388,7 +388,7 @@ jobs:
           retention-days: 7
 
   surya-kernel-image:
-    needs: surya-dtb
+    # Independent build: only the stock audit needs the DTB artifact.
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     env:
