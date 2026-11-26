@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/* Offline integration only. These rails may have non-UFS consumers. */
+&pm6150_l19 {
+	regulator-min-microvolt = <2944000>;
+	regulator-max-microvolt = <3304000>;
+	qcom,init-voltage = <2944000>;
+};
+
+&pm6150_l12 {
+	regulator-min-microvolt = <1696000>;
+	regulator-max-microvolt = <1952000>;
+	qcom,init-voltage = <1696000>;
+};
+
+&pm6150_l4 {
+	regulator-min-microvolt = <824000>;
+	regulator-max-microvolt = <920000>;
+	qcom,init-voltage = <824000>;
+};
+
+&pm6150l_l3 {
+	regulator-min-microvolt = <1144000>;
+	regulator-max-microvolt = <1256000>;
+	qcom,init-voltage = <1144000>;
+};

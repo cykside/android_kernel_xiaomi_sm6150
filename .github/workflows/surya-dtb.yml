@@ -298,6 +298,11 @@ jobs:
           for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000; do
             test "$(fdtget -t s "$dtb" "$node" status)" = disabled
           done
+          /usr/bin/python3 scripts/dtc/surya-ufs-providers.py "$dtb" > "$RUNNER_TEMP/surya-integration-ufs.txt"
+          cat "$RUNNER_TEMP/surya-integration-ufs.txt"
+          for voltage in 2944000 1696000 824000 1144000; do
+            grep -Fx "    qcom,init-voltage: $voltage" "$RUNNER_TEMP/surya-integration-ufs.txt"
+          done
 
       - uses: actions/upload-artifact@v4
         with:

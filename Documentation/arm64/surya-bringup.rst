@@ -584,3 +584,10 @@ Both are now disabled in the offline tree and integration fixture.
 CI rejects any enabled consumer found by the inventory in the fixture.
 This is a static check, not validation of TLMM hardware or untracked
 consumer references. The main Surya DTB is unchanged.
+
+The integration fixture also stages the four stock UFS rail ranges and
+initial voltages in ``surya-ufs-audit.dtsi``. CI resolves the host and
+PHY supply phandles before checking those initial voltages. The rails
+can have other consumers; do not promote these settings to the main
+DTB without validating the shared votes. The host and PHY remain off,
+and this fixture is not a boot or flash candidate.
