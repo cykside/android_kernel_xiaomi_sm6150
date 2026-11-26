@@ -58,7 +58,23 @@
 
 			channel@83 {
 				reg = <ADC5_VPH_PWR>;
-				label = "vph_voltage";
+				label = "vph_voltage",
+					   "resistance_id",
+					      "voltage_now",
+					      "temp",
+					      "capacity",
+					      "voltage_ocv",
+					      "voltage_avg",
+					      "debug_battery",
+					      "real_capacity",
+					      "cc_soc",
+					      "current_now",
+					      "voltage_max",
+					      "charge_full",
+					      "charge_counter",
+					      "cycle_count",
+					      "charge_full_design",
+					      "time_to_full_now";
 				qcom,pre-scaling = <1 3>;
 			};
 
@@ -93,10 +109,42 @@
 				      <&pm6150_vadc ADC5_DIE_TEMP>,
 				      <&pm6150l_vadc ADC5_AMUX_THM1_100K_PU>,
 				      <&pm6150_vadc ADC5_SBUx>,
-				      <&pm6150_vadc ADC5_VPH_PWR>;
+				      <&pm6150_vadc ADC5_VPH_PWR>,
+				      <&pm6150_qg PSY_IIO_RESISTANCE_ID>,
+				      <&pm6150_qg PSY_IIO_VOLTAGE_NOW>,
+				      <&pm6150_qg PSY_IIO_TEMP>,
+				      <&pm6150_qg PSY_IIO_CAPACITY>,
+				      <&pm6150_qg PSY_IIO_VOLTAGE_OCV>,
+				      <&pm6150_qg PSY_IIO_VOLTAGE_AVG>,
+				      <&pm6150_qg PSY_IIO_DEBUG_BATTERY>,
+				      <&pm6150_qg PSY_IIO_REAL_CAPACITY>,
+				      <&pm6150_qg PSY_IIO_CC_SOC>,
+				      <&pm6150_qg PSY_IIO_CURRENT_NOW>,
+				      <&pm6150_qg PSY_IIO_VOLTAGE_MAX>,
+				      <&pm6150_qg PSY_IIO_CHARGE_FULL>,
+				      <&pm6150_qg PSY_IIO_CHARGE_COUNTER>,
+				      <&pm6150_qg PSY_IIO_CYCLE_COUNT>,
+				      <&pm6150_qg PSY_IIO_CHARGE_FULL_DESIGN>,
+				      <&pm6150_qg PSY_IIO_TIME_TO_FULL_NOW>;
 			io-channel-names = "usb_in_voltage", "usb_in_current",
 					   "chg_temp", "die_temp", "conn_temp", "sbux_res",
-					   "vph_voltage";
+					   "vph_voltage",
+					   "resistance_id",
+					      "voltage_now",
+					      "temp",
+					      "capacity",
+					      "voltage_ocv",
+					      "voltage_avg",
+					      "debug_battery",
+					      "real_capacity",
+					      "cc_soc",
+					      "current_now",
+					      "voltage_max",
+					      "charge_full",
+					      "charge_counter",
+					      "cycle_count",
+					      "charge_full_design",
+					      "time_to_full_now";
 
 			/* Surya 4.14 tables supported by the 6.1 SMB5 driver. */
 			qcom,thermal-mitigation = <6000000 5500000 4900000 4600000 4500000 4400000
@@ -335,10 +383,11 @@
 		};
 
 		/* No battery profile is selected until pack identification is verified. */
-		fuel-gauge {
+		pm6150_qg: fuel-gauge {
 			compatible = "qcom,pm6150-qg";
 			#address-cells = <1>;
 			#size-cells = <0>;
+			#io-channel-cells = <1>;
 			io-channels = <&pm6150_vadc ADC5_BAT_THERM_100K_PU>,
 				      <&pm6150_vadc ADC5_BAT_ID_100K_PU>;
 			io-channel-names = "batt-therm", "batt-id";

@@ -121,3 +121,10 @@ The 4.14 board DTS includes both M703 ATL 5160 mAh and 6000 mAh profiles.
 Do not choose a profile by capacity alone: compare the battery ID
 resistance and pack markings with stock, then validate profile selection,
 temperature, and state of charge before enabling the gauge or SMB5.
+
+SMB5 now references the 6.1 QGauge IIO outputs for battery telemetry.
+Both nodes remain disabled and neither selects a profile. Both stock
+profiles declare the same 100 kOhm battery ID and the board uses a 15%
+match range, so resistance alone cannot distinguish them. Identify the
+pack and firmware variant before linking a profile. The reverse gauge
+links for charger state are not staged here.
