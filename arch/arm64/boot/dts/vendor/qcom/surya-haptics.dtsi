@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0-only
+
+/* Stock haptic wiring from the 4.14 haptic.dtsi. */
+&qupv3_se1_i2c {
+	haptic@5a {
+		compatible = "awinic,aw8624_haptic", "ti,drv2624";
+		reg = <0x5a>;
+		reset-gpio = <&tlmm 63 0>;
+		irq-gpio = <&tlmm 26 0>;
+		ti,reset-gpio = <&tlmm 63 0>;
+		ti,irq-gpio = <&tlmm 26 0>;
+		status = "disabled";
+	};
+};

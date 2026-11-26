@@ -150,3 +150,16 @@ jobs:
           test "$(fdtget -t s "$dtb" "$touch" compatible)" = 'novatek,NVT-ts-spi'
           test "$(fdtget -t u "$dtb" "$touch" spi-max-frequency)" = 19200000
           make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 drivers/spi/spi-msm-geni.o
+      - name: Verify staged haptic wiring
+        run: |
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+          bus=/soc/qcom,qupv3_0_geni_se@8c0000/i2c@884000
+          haptic=$bus/haptic@5a
+          test "$(fdtget -t s "$dtb" "$bus" status)" = disabled
+          test "$(fdtget -t s "$dtb" "$haptic" status)" = disabled
+          test "$(fdtget -t x "$dtb" "$haptic" reg)" = 5a
+          test "$(fdtget -t s "$dtb" "$haptic" compatible)" = 'awinic,aw8624_haptic ti,drv2624'
+          reset=$(fdtget -t u "$dtb" "$haptic" reset-gpio)
+          irq=$(fdtget -t u "$dtb" "$haptic" irq-gpio)
+          test "${reset#* }" = '63 0'
+          test "${irq#* }" = '26 0'

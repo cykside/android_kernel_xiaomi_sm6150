@@ -204,3 +204,18 @@ UART at 0x880000 (including its IRQ); do not enable SPI until the UART
 is relocated or disabled and the Surya SPI pinmux is verified. The
 legacy Novatek SPI driver and firmware selection still need a 6.1 port;
 this change does not import factory test tables.
+
+The stock SPI active state uses ``qup00`` on GPIOs 49–52 (WEST tile,
+mux slot 2). The 6.1 SM6150 pinctrl table only advertises ``qup00`` on
+GPIOs 16–17 and places GPIOs 49–52 in EAST/SOUTH. Do not attach the
+stock pinctrl state to the current driver or change the shared table
+without a verified Surya-specific controller variant.
+
+Haptics
+-------
+
+The 4.14 haptic wiring is staged on QUPv3 SE1 I2C at address 0x5a,
+with reset on TLMM GPIO 63 and IRQ on GPIO 26. Both the host and the
+client remain disabled. The stock DTS lists AW8624 and DRV2624; identify
+the populated chip before choosing a driver. Waveforms, calibration
+and actuator voltage settings are deliberately not imported here.
