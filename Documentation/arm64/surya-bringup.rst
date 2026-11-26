@@ -759,3 +759,10 @@ FSociety describes ``0xddc`` bytes while 6.1 describes ``0xe00``.
 The 6.1 mapping is deliberately not shrunk to the 4.14 size: the
 6.1 driver maps the resource it is given and its register accesses
 must determine the required span. Static agreement is not a link test.
+
+To calculate replacement offsets without generating an image, add
+``--plan Image.gz surya-sm6150-ufs-test.dtb`` to the boot layout checker.
+The dry run retains the reference ramdisk size and DTB load address,
+validates the replacement gzip prefix and single-FDT size, and reports
+the padded payload end. It excludes AVB/footer data and does not
+establish boot-partition capacity, bootability or overlay compatibility.
