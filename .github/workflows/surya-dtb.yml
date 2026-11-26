@@ -91,7 +91,8 @@ jobs:
             drivers/ufs/host/ufs-qcom.o \
             drivers/phy/qualcomm/phy-qcom-ufs-qmp-v3.o \
             drivers/regulator/qpnp-lcdb-regulator.o \
-            drivers/video/backlight/qcom-spmi-wled.o
+            drivers/video/backlight/qcom-spmi-wled.o \
+            drivers/pinctrl/qcom/pinctrl-sdmmagpie.o
       - name: Verify staged NT36672C panel data
         run: |
           dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb

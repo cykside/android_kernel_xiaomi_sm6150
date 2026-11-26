@@ -511,6 +511,13 @@ config PINCTRL_SM8150
 	 Qualcomm Technologies Inc TLMM block found on the Qualcomm
 	 Technologies Inc SM8150 platform.
 
+config PINCTRL_SDMMAGPIE
+	tristate "Qualcomm SDMMagpie pin controller"
+	depends on OF && PINCTRL_MSM
+	help
+	  Enable the SDMMagpie-specific tile offsets and GPIO mux table.
+	  The driver supports the summary interrupt, not legacy direct IRQs.
+
 config PINCTRL_SM6150
 	tristate "Qualcomm Technologies Inc SM6150 pin controller driver"
 	depends on OF

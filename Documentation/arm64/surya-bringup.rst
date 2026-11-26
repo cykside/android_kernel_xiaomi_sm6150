@@ -245,3 +245,15 @@ I2C pinctrl uses GPIOs 34/35; the 6.1 base uses GPIOs 0/1. The inherited
 pinctrl was removed from this disabled bus to avoid treating it as the
 Surya wiring. A matching pinctrl variant and a compatible NQ-NCI driver
 are required before enabling it.
+
+SDMMagpie pinctrl driver
+------------------------
+
+The separate ``qcom,sdmmagpie-pinctrl`` driver ports the stock 4.14 mux
+and tile tables to the 6.1 MSM pinctrl core without changing SM6150 or
+Violet mappings. It supports the stock summary IRQ only; direct-connect
+IRQs and wake routing are not ported. CI compiles the driver, but the
+Surya DTS still selects the existing SM6150 controller. Switching to
+SDMMagpie requires auditing the stock TLMM MMIO base (0x03400000 versus
+the inherited 0x03000000), its IRQ, and every inherited pinctrl consumer
+as a group. Changing only the compatible string would be incorrect.
