@@ -164,6 +164,20 @@ jobs:
           test "${reset#* }" = '63 0'
           test "${irq#* }" = '26 0'
 
+      - name: Verify staged NFC and compile GENI I2C
+        run: |
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+          bus=/soc/qcom,qupv3_0_geni_se@8c0000/i2c@888000
+          nfc=$bus/nfc@28
+          test "$(fdtget -t s "$dtb" "$bus" status)" = disabled
+          test "$(fdtget -t s "$dtb" "$nfc" status)" = disabled
+          test "$(fdtget -t s "$dtb" "$nfc" compatible)" = 'qcom,nq-nci'
+          test "$(fdtget -t x "$dtb" "$nfc" reg)" = 28
+          test "$(fdtget -t u "$dtb" "$nfc" interrupts)" = '37 0'
+          ese=$(fdtget -t u "$dtb" "$nfc" qcom,nq-esepwr)
+          test "${ese#* }" = '22 0'
+          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 drivers/i2c/busses/i2c-msm-geni.o
+
   surya-kernel-image:
     needs: surya-dtb
     runs-on: ubuntu-24.04

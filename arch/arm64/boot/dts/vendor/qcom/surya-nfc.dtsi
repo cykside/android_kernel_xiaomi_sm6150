@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#include <dt-bindings/gpio/gpio.h>
+
+/* Stock wiring from 4.14 sdmmagpie-idp.dtsi. */
+&qupv3_se2_i2c {
+	/* The base pinctrl uses GPIOs 0/1, not Surya's GPIOs 34/35. */
+	/delete-property/ pinctrl-names;
+	/delete-property/ pinctrl-0;
+	/delete-property/ pinctrl-1;
+	qcom,clk-freq-out = <1000000>;
+	status = "disabled";
+
+	nfc@28 {
+		compatible = "qcom,nq-nci";
+		reg = <0x28>;
+		qcom,nq-irq = <&tlmm 37 GPIO_ACTIVE_HIGH>;
+		qcom,nq-ven = <&tlmm 12 GPIO_ACTIVE_HIGH>;
+		qcom,nq-firm = <&tlmm 36 GPIO_ACTIVE_HIGH>;
+		qcom,nq-clkreq = <&tlmm 31 GPIO_ACTIVE_HIGH>;
+		qcom,nq-esepwr = <&tlmm 22 GPIO_ACTIVE_HIGH>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <37 IRQ_TYPE_NONE>;
+		interrupt-names = "nfc_irq";
+		status = "disabled";
+	};
+};

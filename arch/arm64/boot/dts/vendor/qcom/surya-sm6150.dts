@@ -6,6 +6,7 @@
 #include "surya-display.dtsi"
 #include "surya-touch.dtsi"
 #include "surya-haptics.dtsi"
+#include "surya-nfc.dtsi"
 
 /* Bring-up stub only. Do not flash: inherited platform data is unvalidated. */
 / {

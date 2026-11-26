@@ -234,3 +234,14 @@ kernel build dependencies (including ``pahole`` for BTF), then run::
 
 The job does not package a boot image, publish a flashable artifact, or
 assert that the resulting kernel can boot on Surya.
+
+NFC
+---
+
+The stock NQ-NCI wiring is staged at I2C address 0x28 on QUPv3 SE2.
+The eSE power signal uses GPIO 22, not GPIO 94 (repurposed for charging
+on the stock board). The bus and NFC client stay disabled. The stock
+I2C pinctrl uses GPIOs 34/35; the 6.1 base uses GPIOs 0/1. The inherited
+pinctrl was removed from this disabled bus to avoid treating it as the
+Surya wiring. A matching pinctrl variant and a compatible NQ-NCI driver
+are required before enabling it.
