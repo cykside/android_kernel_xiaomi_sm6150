@@ -196,7 +196,7 @@ int qcom_icc_bcm_init(struct qcom_icc_provider *qp, struct qcom_icc_bcm *bcm,
 	struct qcom_icc_node *qn;
 	const struct bcm_db *data;
 	struct bcm_voter *voter;
-	size_t data_count;
+	size_t data_len;
 	u32 addr;
 	int ret;
 	int i;
@@ -212,13 +212,13 @@ int qcom_icc_bcm_init(struct qcom_icc_provider *qp, struct qcom_icc_bcm *bcm,
 		return -EINVAL;
 	}
 
-	data = cmd_db_read_aux_data(bcm->name, &data_count);
+	data = cmd_db_read_aux_data(bcm->name, &data_len);
 	if (IS_ERR(data)) {
 		dev_err(dev, "%s command db read error (%ld)\n",
 			bcm->name, PTR_ERR(data));
 		return PTR_ERR(data);
 	}
-	if (!data_count) {
+	if (data_len < sizeof(*data)) {
 		dev_err(dev, "%s command db missing or partial aux data\n",
 			bcm->name);
 		return -EINVAL;
