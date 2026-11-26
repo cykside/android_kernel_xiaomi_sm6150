@@ -326,3 +326,25 @@ bootloader-selected DTBO index.
 The extracted components are useful for DT comparison but do not
 establish the original boot header, image placement, or AVB metadata.
 Use the original firmware images for that part of the boot audit.
+
+Use this snapshot as the offline comparison baseline even when the
+phone runs V14.0.2.0.SJGMIXM. In the snapshot the base DTS reports
+``qcom,sdmmagpie``, SoC ID ``<0x16d 0>``, and board ID ``<0 0>``; the
+IDP overlay supplies board ID ``<0x22 0>``. The base also retains
+``__symbols__``, which the overlay's ``__fixups__`` require.
+
+To compare this pair offline, download the base binary named above and
+extract the matching binary overlay from the dump. If only the dumped
+text overlay is available, recompile it for comparison only::
+
+    dtc -I dts -O dtb -o stock-idp.dtbo '16_dtbdump_qcom,sdmmagpie-idp.dts'
+    fdtoverlay -i '12_dtbdump_Qualcomm_Technologies,_Inc._SDMMAGPIE_SoC.dtb' \
+        -o stock-surya-merged.dtb stock-idp.dtbo
+    fdtget -t x stock-surya-merged.dtb / qcom,board-id
+    /usr/bin/python3 scripts/dtc/surya-tlmm-users.py \
+        stock-surya-merged.dtb /soc/pinctrl@3400000
+
+The expected board ID is ``22 0``. The merged tree is not a runtime FDT:
+ABL fixups, selected overlay index, and firmware differences are not
+validated by a successful offline merge. Do not use it as a boot image
+or substitute it for the phone's V14.0.2.0 stock boot components.
