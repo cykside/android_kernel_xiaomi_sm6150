@@ -346,6 +346,8 @@ jobs:
       - name: Compare vendor module requests against resolved Surya config
         run: |
           report="$RUNNER_TEMP/surya-module-config.tsv"
+          grep -Fx CONFIG_ARM_SMMU=y out/surya/.config
+          grep -Fx CONFIG_ARM_SMMU_QCOM=y out/surya/.config
           awk -F= '
             FNR == NR {
               if ($1 ~ /^CONFIG_/) state[$1] = $2

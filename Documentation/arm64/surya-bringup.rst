@@ -457,3 +457,12 @@ inherited voltage is suitable for Surya. Stock uses L3C for both the
 PHY PLL and the host reference clock, so check both consumers and the
 target DTB constraints before overriding the rail. Neither the fuse
 mapping nor the regulator constraints are changed by this audit.
+
+The compiled MIUI 14.0.1 audit resolved the same supply roles, but
+confirmed differing regulator constraints (stock vs. Surya 6.1):
+VCC L19 2.944–3.304 V vs. 2.700–3.008 V; VCCQ2 L12
+1.696–1.952 V vs. 1.800–1.950 V; PHY L4 0.824–0.920 V vs.
+0.875–0.975 V. L3C matches the source comparison above. The stock
+host has no NVMEM reference; the Surya host resolves to the inherited
+QFPROM cell. These results are for the offline dump, not the target
+firmware's live tree. UFS remains disabled.
