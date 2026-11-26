@@ -559,3 +559,14 @@ pinned stock dump. The primary DTB had 14 partial-overlap pairs; the
 offline DTB had two. These are cross-tree comparisons, not a count of
 internal overlaps or proof that firmware consumers are safe. Inspect
 both remaining pairs before promoting the offline changes.
+
+Actions run ``45794221831`` identified both remaining offline pairs:
+stock ``disp_rdump_region@9c000000`` covers ``[0x9c000000, 0x9d800000)``
+and overlaps the offline splash ``[0x9c000000, 0x9d700000)`` and DFPS
+``[0x9d700000, 0x9d800000)``. The two offline ranges are adjacent and
+exactly partition the stock ramdump span. There is no internal overlap
+between these two offline nodes. The running FSociety sample exposed
+splash and DFPS at those addresses without a separate display ramdump
+node, so the offline variant follows the live layout. This does not
+validate display takeover or justify dropping any firmware-owned
+memory from the primary DTB.
