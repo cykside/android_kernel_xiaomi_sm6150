@@ -347,6 +347,7 @@ jobs:
           path: |
             out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
             out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-tlmm-audit.dtb
+            out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-ufs-test.dtb
           if-no-files-found: error
           retention-days: 3
 
@@ -378,6 +379,25 @@ jobs:
             "$dump/dtbodts/16_dtbdump_qcom,sdmmagpie-idp.dts" \
             -o "$work/idp.dts"
           scripts/dtc/surya-stock-audit.sh "$work/base.dtb" "$work/idp.dts" "$work/report"
+          candidate=out/surya-dtb-for-audit/surya-sm6150-ufs-test.dtb
+          dtc -I dts -O dtb -o "$work/idp.dtbo" "$work/idp.dts"
+          fdtget -p "$work/idp.dtbo" /__fixups__ | LC_ALL=C sort -u > "$work/fixups.txt"
+          (fdtget -p "$candidate" /__symbols__ 2>/dev/null || true) | LC_ALL=C sort -u > "$work/symbols.txt"
+          LC_ALL=C comm -23 "$work/fixups.txt" "$work/symbols.txt" > "$work/missing-fixups.txt"
+          if fdtoverlay -i "$candidate" -o "$work/merged-test.dtb" "$work/idp.dtbo" > "$work/apply.txt" 2>&1; then
+            overlay_result=applied
+          else
+            overlay_result=rejected
+          fi
+          missing=$(wc -l < "$work/missing-fixups.txt")
+          printf '::notice title=Surya overlay baseline::MIUI 14.0.1 overlay %s; missing fixup symbols: %s\n' "$overlay_result" "$missing"
+          {
+            printf '### Stock overlay against the compile-only UFS DTB: %s\n\n' "$overlay_result"
+            printf '\x60\x60\x60text\nMissing fixup symbols (%s):\n' "$missing"
+            cat "$work/missing-fixups.txt" "$work/apply.txt"
+            printf '\x60\x60\x60\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
           /usr/bin/python3 scripts/dtc/surya-tlmm-users.py \
             "$work/report/stock-surya-merged.dtb" /soc/pinctrl@3400000 > "$work/tlmm-users.tsv"
           /usr/bin/python3 scripts/dtc/surya-reserved-memory-diff.py \
@@ -421,7 +441,7 @@ jobs:
           for comparison in offline-memory-diff reserved-memory-diff; do
             limit=3
             if [ "$comparison" = offline-memory-diff ]; then
-              limit=4
+              limit=3
             fi
             grep '^partial overlap:' "$work/$comparison.txt" | head -n "$limit" | while IFS= read -r line; do
               printf '::notice title=Surya %s::%s\n' "$comparison" "${line//%/%25}"

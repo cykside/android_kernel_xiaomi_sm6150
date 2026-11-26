@@ -613,3 +613,9 @@ the PHY reset provider, the named device reset states, and the enabled
 supply consumers. This fixture is not packaged or published as a boot
 artifact. The primary DTB still disables UFS; hardware behavior,
 active DTBO compatibility and recovery are not verified by this check.
+
+CI attempts an offline merge of the pinned MIUI 14.0.1 overlay with
+that UFS integration DTB and reports missing external fixup symbols.
+An applied overlay is not a compatibility pass: it can still override
+hardware properties, and the overlay from the active device has not
+been tested. The merged output is not packaged or published.
