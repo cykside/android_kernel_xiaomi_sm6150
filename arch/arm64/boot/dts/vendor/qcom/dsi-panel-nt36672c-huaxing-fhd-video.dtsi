@@ -13,6 +13,8 @@
 &mdss_mdp {
 	dsi_nt36672c_huaxing_fhd_video: qcom,mdss_dsi_nt36672c_huaxing_fhd_video {
 		status = "disabled";
+		qcom,mdss-dsi-t-clk-post = <0x04>;
+		qcom,mdss-dsi-t-clk-pre = <0x26>;
 		qcom,mdss-dsi-panel-name = "nt36672c huaxing fhd video mode dsi panel";
 		qcom,mdss-dsi-panel-id = <0>;
 		qcom,mdss-dsi-panel-type = "dsi_video_mode";
@@ -282,6 +284,8 @@
 				];
 				qcom,mdss-dsi-dispparam-xy-coordinate-command-state = "dsi_hs_mode";
 
+				qcom,display-topology = <1 1 1>;
+				qcom,default-topology-index = <0>;
 				qcom,compression-mode = "dsc";
 				qcom,mdss-dsc-version = <0x11>;
 				qcom,mdss-dsc-scr-version = <0x0>;

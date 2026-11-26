@@ -128,3 +128,11 @@ jobs:
             test "$(fdtget -t u "$dtb" "$panel" qcom,dsi-ctrl-num)" = 0
             test "$(fdtget -t u "$dtb" "$panel" qcom,dsi-phy-num)" = 0
           done
+          for vendor in huaxing tianma; do
+            panel=/soc/qcom,mdss_mdp@ae00000/qcom,mdss_dsi_nt36672c_${vendor}_fhd_video
+            timing=$panel/qcom,mdss-dsi-display-timings/timing@0
+            test "$(fdtget -t u "$dtb" "$timing" qcom,display-topology)" = '1 1 1'
+            test "$(fdtget -t s "$dtb" "$timing" qcom,compression-mode)" = dsc
+            test "$(fdtget -t x "$dtb" "$panel" qcom,mdss-dsi-t-clk-pre)" = 26
+            test "$(fdtget -t x "$dtb" "$panel" qcom,mdss-dsi-t-clk-post)" = 4
+          done

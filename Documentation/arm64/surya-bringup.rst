@@ -175,3 +175,11 @@ to LCDB LDO/NCP. SoC-level SDE, DSI and PHY definitions are shared with
 Violet; its panel selection, supplies and pinctrl stay in its board
 include. Surya still needs its own host pinctrl, PHY mode timing, and
 on-device voltage and reset validation before enabling the display.
+
+The stock DSC topology (one mixer, one compression encoder and one
+interface) and DSI clock pre/post values are carried over for both panels.
+The stock 12-byte PHY timing table is not passed to the 6.1 14 nm PHY,
+whose known board configuration uses 40 per-lane timing bytes. Do not
+pad the stock table or copy Violet's values. Also, the current SM6150
+pinctrl driver does not expose the stock ``mdp_vsync`` mux on GPIO 10;
+verify the SoC pinmux selection before adding a host pinctrl state.
