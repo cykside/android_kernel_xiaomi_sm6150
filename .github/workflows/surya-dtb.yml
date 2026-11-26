@@ -41,3 +41,6 @@ jobs:
                       /soc/ssusb@a600000 /soc/hsusb@a800000; do
             test "$(fdtget -t s "$dtb" "$node" status)" = disabled
           done
+          pdphy=/soc/qcom,spmi@c440000/pmic@0/usb-pdphy@1700
+          test "$(fdtget -t x "$dtb" "$pdphy" reg)" = '1700'
+          test "$(fdtget -t s "$dtb" "$pdphy" status)" = disabled

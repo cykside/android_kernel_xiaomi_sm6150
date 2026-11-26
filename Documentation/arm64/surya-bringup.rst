@@ -87,3 +87,9 @@ not supply the same board-specific PMIC policy nodes. Do not copy Violet's
 charger configuration or force peripheral mode to bypass role detection.
 Port the Surya PMIC/Type-C event path first, then verify VBUS detection,
 USB role changes and gadget enumeration on hardware before testing ADB.
+
+``surya-pm6150.dtsi`` stages the PM6150 SID 0 PD PHY register, interrupt
+routing, and L17 supply from the 4.14 source. It leaves the PHY disabled,
+with no VBUS/VCONN or charger IIO links and no copied charging limits.
+Completing the path requires a Surya-specific SMB5 node and validated
+charger/thermal policy before enabling PD or connecting the DWC3 extcon.
