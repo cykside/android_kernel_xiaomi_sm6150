@@ -2235,19 +2235,15 @@ static int ufs_qcom_bus_register(struct ufs_qcom_host *host)
 	}
 	host->qbsd = qsd;
 
-	qsd->ufs_ddr = of_icc_get(dev, UFS_DDR);
-	if (IS_ERR(qsd->ufs_ddr)) {
-		dev_err(dev, "Error: (%ld) failed getting %s path\n",
-			PTR_ERR(qsd->ufs_ddr), UFS_DDR);
-		return PTR_ERR(qsd->ufs_ddr);
-	}
+	qsd->ufs_ddr = devm_of_icc_get(dev, UFS_DDR);
+	if (IS_ERR(qsd->ufs_ddr))
+		return dev_err_probe(dev, PTR_ERR(qsd->ufs_ddr),
+				     "failed getting %s path\n", UFS_DDR);
 
-	qsd->cpu_ufs = of_icc_get(dev, CPU_UFS);
-	if (IS_ERR(qsd->cpu_ufs)) {
-		dev_err(dev, "Error: (%ld) failed getting %s path\n",
-			PTR_ERR(qsd->cpu_ufs), CPU_UFS);
-		return PTR_ERR(qsd->cpu_ufs);
-	}
+	qsd->cpu_ufs = devm_of_icc_get(dev, CPU_UFS);
+	if (IS_ERR(qsd->cpu_ufs))
+		return dev_err_probe(dev, PTR_ERR(qsd->cpu_ufs),
+				     "failed getting %s path\n", CPU_UFS);
 
 	/* cache the vote index for minimum and maximum bandwidth */
 	host->bus_vote.min_bw_vote = ufs_qcom_get_bus_vote(host, "MIN");
