@@ -503,3 +503,30 @@ Live ``qcom,msm-id`` and ``qcom,board-id`` decode as ``<365 0>`` and
 DTS. The compatible strings differ. This confirms live board identity,
 not how the live tree was assembled or that the active overlay applies
 to the 6.1 base.
+
+Live reserved-memory sample
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The FSociety device tree reports two address cells and two size cells.
+The ranges below were read from ``reg`` on the running device; none of
+these nodes had an explicit ``status``. Ends are exclusive.
+
+====================  ============  ============
+Reservation           Start         End
+====================  ============  ============
+XBL/AOP               ``85e00000``  ``85fff000``
+CDSP                  ``93900000``  ``95700000``
+ADSP                  ``95700000``  ``97500000``
+WLAN MSA              ``97500000``  ``97680000``
+NPU                   ``97680000``  ``97700000``
+Continuous splash     ``9c000000``  ``9d700000``
+DFPS                  ``9d700000``  ``9d800000``
+Ramoops               ``9d800000``  ``9dc00000``
+====================  ============  ============
+
+The first seven ranges match the audited stock layout. Ramoops also
+matches the staged Surya 6.1 address and size. The live XBL/AOP range
+covers the port's command DB subrange, but that does not establish
+whether firmware uses that subrange for command DB or exposes it through
+a separate device-tree node. Keep the port layout unchanged until the
+firmware consumers and the command DB mapping are reconciled.
