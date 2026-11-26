@@ -830,7 +830,7 @@ jobs:
           path: ${{ runner.temp }}/surya-offline-pair/
           if-no-files-found: error
           retention-days: 7
-      - name: Assemble the experimental Surya TWRP package
+      - name: Assemble the no-write Surya TWRP diagnostic
         if: contains(github.event.pull_request.labels.*.name, 'surya-twrp-test')
         run: |
           work=$(mktemp -d)
@@ -845,15 +845,25 @@ jobs:
           cp "$bundle/surya-base.dtb" "$work/installer/dtb"
           cp "$bundle/surya-ufs.dtbo-table.test" "$work/installer/dtbo.img"
           cd "$work/installer"
-          sh -n anykernel.sh
+          python3 - <<'PYTHON'
+          from pathlib import Path
+
+          core = Path('tools/ak3-core.sh')
+          text = core.read_text()
+          start = text.index('  blockdev --setrw $BLOCK')
+          end = text.index('\n}', start)
+          text = text[:start] + '  surya_report_repack; # SURYA_DIAGNOSTIC_NO_FLASH\n  return $?;' + text[end:]
+          core.write_text(text)
+          PYTHON
+          sh -n anykernel.sh tools/ak3-core.sh
           sha256sum Image.gz dtb dtbo.img > SURYA-SHA256SUMS
-          zip -q -r "$RUNNER_TEMP/Surya-6.1-EXPERIMENTAL-TWRP.zip" META-INF tools LICENSE anykernel.sh Image.gz dtb dtbo.img SURYA-SHA256SUMS
-          unzip -tq "$RUNNER_TEMP/Surya-6.1-EXPERIMENTAL-TWRP.zip"
+          zip -q -r "$RUNNER_TEMP/Surya-6.1-TWRP-DIAGNOSTIC-NO-WRITE.zip" META-INF tools LICENSE anykernel.sh Image.gz dtb dtbo.img SURYA-SHA256SUMS
+          unzip -tq "$RUNNER_TEMP/Surya-6.1-TWRP-DIAGNOSTIC-NO-WRITE.zip"
       - uses: actions/upload-artifact@v4
         if: contains(github.event.pull_request.labels.*.name, 'surya-twrp-test')
         with:
-          name: Surya-6.1-EXPERIMENTAL-TWRP
-          path: ${{ runner.temp }}/Surya-6.1-EXPERIMENTAL-TWRP.zip
+          name: Surya-6.1-TWRP-DIAGNOSTIC-NO-WRITE
+          path: ${{ runner.temp }}/Surya-6.1-TWRP-DIAGNOSTIC-NO-WRITE.zip
           if-no-files-found: error
           retention-days: 7
       - name: Report compiler cache statistics
