@@ -42,6 +42,8 @@ split_boot;
 patch_cmdline 'earlycon=' 'earlycon=ramoops,0x9da00000,0x40000';
 patch_cmdline 'reboot=' 'reboot=warm';
 patch_cmdline 'panic=' 'panic=5';
+# Leave warnings and panics visible without flooding the early console.
+patch_cmdline 'loglevel=' 'loglevel=5';
 grep -Eq '^cmdline=.*earlycon=ramoops,0x9da00000,0x40000( |$)' "$SPLITIMG/header" ||
   abort 'Log argument missing; nothing written.';
 flash_boot;
