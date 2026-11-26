@@ -36,3 +36,34 @@
 		status = "disabled";
 	};
 };
+
+/* Move the entire contiguous DSP/WLAN/NPU window together. */
+&rproc_cdsp_mem {
+	reg = <0x0 0x93900000 0x0 0x1e00000>;
+};
+
+&rproc_adsp_mem {
+	reg = <0x0 0x95700000 0x0 0x1e00000>;
+};
+
+/delete-node/ &wlan_msa_mem;
+
+&{/reserved-memory} {
+	wlan_msa_mem: wlan_msa_region@97500000 {
+		reg = <0x0 0x97500000 0x0 0x180000>;
+		no-map;
+	};
+
+	npu_region@97680000 {
+		reg = <0x0 0x97680000 0x0 0x80000>;
+		no-map;
+	};
+};
+
+&adsp_pas {
+	status = "disabled";
+};
+
+&cdsp_pas {
+	status = "disabled";
+};
