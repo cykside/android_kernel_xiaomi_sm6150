@@ -39,10 +39,16 @@ check_prop x "$overlay" qcom,board-id '22 0'
 fdtoverlay -i "$base" -o "$tmp/stock-surya-merged.dtb" "$overlay"
 merged=$tmp/stock-surya-merged.dtb
 check_prop x "$merged" qcom,msm-id '16d 0'
-check_prop x "$merged" qcom,board-id '22 0'
+# Overlay-root properties select a DTBO; fdtoverlay only applies fragments.
+merged_board=$(fdtget -t x "$merged" / qcom,board-id)
+case "$merged_board" in
+	'0 0'|'22 0') ;;
+	*) printf 'Unexpected merged board ID: %s\n' "$merged_board" >&2; exit 1 ;;
+esac
 dtc -I dtb -O dts -o "$tmp/stock-surya-merged.dts" "$merged"
 {
 	printf 'Offline reference only; not a live FDT or a boot image.\n\n'
+	printf 'Merged board ID: %s\n' "$merged_board"
 	printf 'TLMM reg: '
 	fdtget -t x "$merged" /soc/pinctrl@3400000 reg
 	printf 'TLMM interrupts: '

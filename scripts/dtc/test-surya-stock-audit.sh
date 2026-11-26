@@ -36,10 +36,6 @@ cat > "$tmp/idp.dts" <<'DTS'
 / {
 	qcom,msm-id = <0x16d 0>;
 	qcom,board-id = <0x22 0>;
-	fragment@0 {
-		target-path = "/";
-		__overlay__ { qcom,board-id = <0x22 0>; };
-	};
 };
 &tlmm { interrupts = <0 208 4>; };
 DTS
@@ -48,7 +44,7 @@ dtc -q -@ -I dts -O dtb -o "$tmp/base.dtb" "$tmp/base.dts"
 dtc -q -I dts -O dtb -o "$tmp/idp.dtbo" "$tmp/idp.dts"
 for overlay in "$tmp/idp.dts" "$tmp/idp.dtbo"; do
 	"$here/surya-stock-audit.sh" "$tmp/base.dtb" "$overlay" "$tmp/report"
-	test "$(fdtget -t x "$tmp/report/stock-surya-merged.dtb" / qcom,board-id)" = '22 0'
+	test "$(fdtget -t x "$tmp/report/stock-surya-merged.dtb" / qcom,board-id)" = '0 0'
 	grep -Fx 'TLMM interrupts: 0 d0 4' "$tmp/report/stock-surya-summary.txt"
 	grep -F '90000000 1000' "$tmp/report/stock-surya-summary.txt"
 done

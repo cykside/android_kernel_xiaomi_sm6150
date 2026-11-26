@@ -344,7 +344,9 @@ text overlay is available, recompile it for comparison only::
     /usr/bin/python3 scripts/dtc/surya-tlmm-users.py \
         stock-surya-merged.dtb /soc/pinctrl@3400000
 
-The expected board ID is ``22 0``. The merged tree is not a runtime FDT:
+The overlay input must have board ID ``22 0``. The merged root may retain
+``0 0`` because the overlay header selects a DTBO but is not itself an
+overlay fragment. The merged tree is not a runtime FDT:
 ABL fixups, selected overlay index, and firmware differences are not
 validated by a successful offline merge. Do not use it as a boot image
 or substitute it for the phone's V14.0.2.0 stock boot components.
