@@ -553,3 +553,9 @@ The offline audit DTB now models this path using
 The driver checks containment before mapping, then checks magic and
 entry bounds. The discovery node is disabled in the audit DTB, and
 the primary Surya DTB retains its fixed mapping pending validation.
+
+Actions run ``45792719883`` compared both compiled DTBs with the same
+pinned stock dump. The primary DTB had 14 partial-overlap pairs; the
+offline DTB had two. These are cross-tree comparisons, not a count of
+internal overlaps or proof that firmware consumers are safe. Inspect
+both remaining pairs before promoting the offline changes.

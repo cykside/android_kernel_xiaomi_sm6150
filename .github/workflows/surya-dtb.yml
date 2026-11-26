@@ -347,9 +347,15 @@ jobs:
             ' "$work/ufs-comparison.txt")
             printf '::notice title=Surya UFS providers::%s\n' "${providers//%/%25}"
           done
-          grep '^partial overlap:' "$work/reserved-memory-diff.txt" | head -n 7 | while IFS= read -r line; do
-            printf '::notice title=Surya reserved memory::%s\n' "${line//%/%25}"
-          done || true
+          for comparison in offline-memory-diff reserved-memory-diff; do
+            limit=3
+            if [ "$comparison" = offline-memory-diff ]; then
+              limit=4
+            fi
+            grep '^partial overlap:' "$work/$comparison.txt" | head -n "$limit" | while IFS= read -r line; do
+              printf '::notice title=Surya %s::%s\n' "$comparison" "${line//%/%25}"
+            done || true
+          done
           {
             echo '### MIUI 14.0.1 stock device tree audit (offline)'
             printf '\n```text\n'
