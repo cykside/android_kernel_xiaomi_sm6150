@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: GPL-2.0-only
+
+/* Stock SDMMagpie states. Do not reference these from active devices
+ * while the board uses the inherited SM6150 controller.
+ */
+&tlmm {
+	surya_te: surya-te-state {
+		pins = "gpio10";
+		function = "mdp_vsync";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	surya_touch_spi_active: surya-touch-spi-active-state {
+		pins = "gpio49", "gpio50", "gpio51", "gpio52";
+		function = "qup00";
+		drive-strength = <6>;
+		bias-disable;
+	};
+
+	surya_touch_spi_sleep: surya-touch-spi-sleep-state {
+		pins = "gpio49", "gpio50", "gpio51", "gpio52";
+		function = "gpio";
+		drive-strength = <6>;
+		bias-pull-up;
+	};
+
+	surya_nfc_i2c_active: surya-nfc-i2c-active-state {
+		pins = "gpio34", "gpio35";
+		function = "qup02";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	surya_nfc_i2c_sleep: surya-nfc-i2c-sleep-state {
+		pins = "gpio34", "gpio35";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+};

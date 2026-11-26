@@ -179,6 +179,18 @@ jobs:
           test "${ese#* }" = '22 0'
           make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 drivers/i2c/busses/i2c-msm-geni.o
 
+      - name: Verify staged SDMMagpie pinctrl states
+        run: |
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+          tlmm=/soc/pinctrl@03000000
+          test "$(fdtget -t s "$dtb" "$tlmm" compatible)" = 'qcom,sm6150-pinctrl'
+          test "$(fdtget -t s "$dtb" "$tlmm/surya-te-state" pins)" = gpio10
+          test "$(fdtget -t s "$dtb" "$tlmm/surya-te-state" function)" = mdp_vsync
+          test "$(fdtget -t s "$dtb" "$tlmm/surya-touch-spi-active-state" pins)" = 'gpio49 gpio50 gpio51 gpio52'
+          test "$(fdtget -t s "$dtb" "$tlmm/surya-touch-spi-active-state" function)" = qup00
+          test "$(fdtget -t s "$dtb" "$tlmm/surya-nfc-i2c-active-state" pins)" = 'gpio34 gpio35'
+          test "$(fdtget -t s "$dtb" "$tlmm/surya-nfc-i2c-active-state" function)" = qup02
+
   surya-kernel-image:
     needs: surya-dtb
     runs-on: ubuntu-24.04

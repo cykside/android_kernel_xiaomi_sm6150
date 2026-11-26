@@ -2,6 +2,7 @@
 /dts-v1/;
 
 #include "sm6150.dtsi"
+#include "surya-pinctrl.dtsi"
 #include "surya-pm6150.dtsi"
 #include "surya-display.dtsi"
 #include "surya-touch.dtsi"

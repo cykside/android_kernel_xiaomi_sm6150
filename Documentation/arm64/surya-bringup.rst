@@ -257,3 +257,10 @@ Surya DTS still selects the existing SM6150 controller. Switching to
 SDMMagpie requires auditing the stock TLMM MMIO base (0x03400000 versus
 the inherited 0x03000000), its IRQ, and every inherited pinctrl consumer
 as a group. Changing only the compatible string would be incorrect.
+
+``surya-pinctrl.dtsi`` records the stock TE, touch SPI and NFC I2C pin
+states for that switch. The states are intentionally unreferenced. A
+source comparison places GPIO 10 in NORTH (``mdp_vsync``), GPIOs 49–52
+in WEST (``qup00``) and GPIOs 34–35 in SOUTH (``qup02``) in the ported
+SDMMagpie table. CI checks these DTS mappings while also checking that
+the active controller compatible has not changed.
