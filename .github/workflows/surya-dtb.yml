@@ -44,3 +44,6 @@ jobs:
           pdphy=/soc/qcom,spmi@c440000/pmic@0/usb-pdphy@1700
           test "$(fdtget -t x "$dtb" "$pdphy" reg)" = '1700'
           test "$(fdtget -t s "$dtb" "$pdphy" status)" = disabled
+          pmic=${pdphy%/*}
+          test "$(fdtget -t s "$dtb" "$pmic/charger" status)" = disabled
+          test "$(fdtget -t s "$dtb" "$pmic/charger" compatible)" = 'qcom,pm6150-smb5'

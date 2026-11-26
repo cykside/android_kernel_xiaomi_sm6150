@@ -88,8 +88,12 @@ charger configuration or force peripheral mode to bypass role detection.
 Port the Surya PMIC/Type-C event path first, then verify VBUS detection,
 USB role changes and gadget enumeration on hardware before testing ADB.
 
-``surya-pm6150.dtsi`` stages the PM6150 SID 0 PD PHY register, interrupt
-routing, and L17 supply from the 4.14 source. It leaves the PHY disabled,
-with no VBUS/VCONN or charger IIO links and no copied charging limits.
-Completing the path requires a Surya-specific SMB5 node and validated
-charger/thermal policy before enabling PD or connecting the DWC3 extcon.
+``surya-pm6150.dtsi`` stages the PM6150 PD PHY and the SMB5 register and
+IRQ layout from 4.14, with single-cell charger peripheral addresses for
+6.1. It connects the PHY to the SMB5 VBUS/VCONN regulators and the 6.1
+policy engine's IIO channels, and describes the primary DWC3 extcon
+providers. The charger, PHY and USB wrappers all remain disabled.
+
+The charger still needs verified ADC inputs, battery data and thermal
+limits. Do not use default driver limits or copy Violet's battery policy.
+The smoke test verifies that the staging nodes remain disabled.
