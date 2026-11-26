@@ -114,3 +114,10 @@ tables supported by the 6.1 driver, copied from 4.14
 non-increasing entries. Charge-pump-specific tables, battery profile,
 and fast-charge policy are not ported here. Table parity does not
 validate temperature calibration, battery limits, or charger behavior.
+
+The disabled PM6150 QGauge node describes the stock gauge and SDAM
+registers and the 100 kOhm pull-up battery thermistor and ID channels.
+The 4.14 board DTS includes both M703 ATL 5160 mAh and 6000 mAh profiles.
+Do not choose a profile by capacity alone: compare the battery ID
+resistance and pack markings with stock, then validate profile selection,
+temperature, and state of charge before enabling the gauge or SMB5.

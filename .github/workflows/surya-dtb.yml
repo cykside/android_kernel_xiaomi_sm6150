@@ -64,3 +64,8 @@ jobs:
             values=$(fdtget -t u "$dtb" "$pmic/charger" "qcom,$table")
             awk 'NF != 16 { exit 1 } { for (i = 2; i <= NF; i++) if ($i > $(i-1)) exit 1 }' <<< "$values"
           done
+          gauge=$pmic/fuel-gauge
+          test "$(fdtget -t s "$dtb" "$gauge" status)" = disabled
+          test "$(fdtget -t s "$dtb" "$gauge" io-channel-names)" = 'batt-therm batt-id'
+          test "$(fdtget -t x "$dtb" "$gauge/qcom,qgauge@4800" reg)" = 4800
+          test "$(fdtget -t x "$dtb" "$gauge/qcom,qg-sdam@b600" reg)" = b600
