@@ -264,3 +264,12 @@ source comparison places GPIO 10 in NORTH (``mdp_vsync``), GPIOs 49–52
 in WEST (``qup00``) and GPIOs 34–35 in SOUTH (``qup02``) in the ported
 SDMMagpie table. CI checks these DTS mappings while also checking that
 the active controller compatible has not changed.
+
+The explicit ``vendor/qcom/surya-sm6150-tlmm-audit.dtb`` target encodes
+stock MMIO and the summary IRQ for offline comparison. It uses the
+6.1 driver's level-high summary configuration for GIC SPI 208 and
+omits the inherited direct-connect IRQs. Both TLMM and the conflicting
+SE0 debug UART are disabled in this audit DTB. Do not boot or flash it.
+The primary Surya DTB and the Violet controller are unchanged. Before
+any switch, audit inherited consumers (UART, SD, USB and other GPIO
+users) against the SDMMagpie pin table and the running stock FDT.

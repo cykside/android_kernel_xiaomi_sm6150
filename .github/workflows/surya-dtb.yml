@@ -191,6 +191,18 @@ jobs:
           test "$(fdtget -t s "$dtb" "$tlmm/surya-nfc-i2c-active-state" pins)" = 'gpio34 gpio35'
           test "$(fdtget -t s "$dtb" "$tlmm/surya-nfc-i2c-active-state" function)" = qup02
 
+      - name: Compile the offline SDMMagpie TLMM audit DTB
+        run: |
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150-tlmm-audit.dtb
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-tlmm-audit.dtb
+          tlmm=/soc/pinctrl@3400000
+          test "$(fdtget -t s "$dtb" "$tlmm" compatible)" = 'qcom,sdmmagpie-pinctrl'
+          test "$(fdtget -t x "$dtb" "$tlmm" reg)" = '3400000 dc2000 17c000f0 60'
+          test "$(fdtget -t u "$dtb" "$tlmm" interrupts)" = '0 208 4'
+          test "$(fdtget -t s "$dtb" "$tlmm" status)" = disabled
+          uart=/soc/qcom,qupv3_0_geni_se@8c0000/qcom,qup_uart@0x880000
+          test "$(fdtget -t s "$dtb" "$uart" status)" = disabled
+
   surya-kernel-image:
     needs: surya-dtb
     runs-on: ubuntu-24.04

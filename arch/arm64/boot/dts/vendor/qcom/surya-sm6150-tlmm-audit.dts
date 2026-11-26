@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/* Offline DTB only. The TLMM remains disabled: do not boot this variant. */
+#define SM6150_TLMM_UNIT_ADDRESS 3400000
+#include "surya-sm6150.dts"
+
+&tlmm {
+	compatible = "qcom,sdmmagpie-pinctrl";
+	reg = <0x03400000 0xdc2000>, <0x17c000f0 0x60>;
+	interrupts = <GIC_SPI 208 IRQ_TYPE_LEVEL_HIGH>;
+	status = "disabled";
+};
+
+/* Its base pin states and SE0 ownership are not valid for Surya. */
+&qupv3_se0_2uart {
+	status = "disabled";
+};
