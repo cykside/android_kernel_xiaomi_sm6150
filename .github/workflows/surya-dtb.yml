@@ -724,11 +724,21 @@ jobs:
           chmod +x "$root/init" "$root/bin/busybox"
           sudo mknod "$root/dev/console" c 5 1
           (cd "$root" && find . -print0 | cpio --null -o --format=newc --owner=0:0) > "$RUNNER_TEMP/qemu-initramfs.cpio"
+          rc=0
           timeout 120 qemu-system-aarch64 -machine virt -cpu cortex-a57 -smp 4 -m 1024 \
             -nodefaults -display none -monitor none -serial stdio -no-reboot \
             -kernel out/surya/arch/arm64/boot/Image -initrd "$RUNNER_TEMP/qemu-initramfs.cpio" \
             -append 'console=ttyAMA0 earlycon rdinit=/init loglevel=7' \
-            2>&1 | tee "$RUNNER_TEMP/surya-qemu-serial.log"
+            2>&1 | tee "$RUNNER_TEMP/surya-qemu-serial.log" || rc=$?
+          serial="$RUNNER_TEMP/surya-qemu-serial.log"
+          if (( rc != 0 )) || ! grep -Fxq SURYA_IMAGE_QEMU_INIT_OK < <(tr -d '\r' < "$serial") || grep -Fq 'Kernel panic - not syncing' "$serial"; then
+            detail=$(tail -25 "$serial" | tr -d '\r')
+            detail=${detail//%/%25}
+            detail=${detail//$'\n'/%0A}
+            printf '::error::QEMU exit=%s; serial tail: %s\n' "$rc" "$detail"
+            exit 1
+          fi
+          echo '::notice::QEMU virt serial confirmed SURYA_IMAGE_QEMU_INIT_OK without kernel panic'
           grep -Fxq SURYA_IMAGE_QEMU_INIT_OK < <(tr -d '\r' < "$RUNNER_TEMP/surya-qemu-serial.log")
           ! grep -Fq 'Kernel panic - not syncing' "$RUNNER_TEMP/surya-qemu-serial.log"
       - uses: actions/upload-artifact@v4
