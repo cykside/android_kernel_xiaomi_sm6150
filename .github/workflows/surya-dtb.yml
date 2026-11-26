@@ -514,12 +514,22 @@ jobs:
               exit 1
             fi
           done
+          python3 scripts/dtc/surya-exact-overlay-tool.py "$work/fdtoverlay-exact"
           for name in sdmmagpie-idp-overlay sdmmagpie-idp-overlay-miui; do
             if sh scripts/dtc/surya-overlay-check.sh "$work/sdmmagpie.dtb" "$work/$name.dtb" > "$work/report" 2>&1; then
               result=applied
             else
               result=rejected
             fi
+            for tool in fdtoverlay-exact-control fdtoverlay-exact; do
+              if "$work/$tool" -i "$work/sdmmagpie.dtb" -o "$work/diagnostic-merged.dtb" "$work/$name.dtb" >> "$work/report" 2>&1; then
+                outcome=applied
+              else
+                outcome=rejected
+              fi
+              printf '%s: %s\n' "$tool" "$outcome" >> "$work/report"
+              if [ "$tool" = fdtoverlay-exact ]; then exact=$outcome; else control=$outcome; fi
+            done
             first=$(head -n 1 "$work/report")
             error=$(grep -m 1 'FDT_ERR_' "$work/report" || true)
             dtc -q -I dtb -O dts "$work/$name.dtb" > "$work/display.dts"
@@ -529,7 +539,7 @@ jobs:
               node && /qcom,platform-reset-gpio|qcom,platform-te-gpio|qcom,dsi-ctrl|qcom,dsi-phy|^[[:space:]]*clocks[[:space:]]*=|pinctrl-[01]|vddio-supply|lab-supply|ibb-supply/ {n++}
               END {print n+0}
             ' "$work/display.dts")
-            printf '::notice title=Surya FSociety reference::%s %s; %s; exact display properties: %s; %s\n' "$name" "$result" "${first//%/%25}" "$display" "${error//%/%25}"
+            printf '::notice title=Surya FSociety reference::%s %s; %s; exact display properties: %s; same-version control=%s exact=%s; %s\n' "$name" "$result" "${first//%/%25}" "$display" "$control" "$exact" "${error//%/%25}"
             {
               printf '### %s: %s\n\n' "$name" "$result"
               printf '\x60\x60\x60text\n'
