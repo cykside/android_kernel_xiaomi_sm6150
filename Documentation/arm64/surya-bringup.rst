@@ -684,3 +684,16 @@ from the exact unsuffixed node. Prefer-exact lookup cannot fix them.
 Any experiment that removes stale fixups should be limited to a local
 copy and must not be treated as a deployable DTBO. The separate 6.1
 missing-symbol issue and the active ABL overlay policy remain open.
+
+FSociety source reference
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The supplied ``cykside/msm-4.14`` repository contains the running
+kernel's short commit ID ``8d46546a`` (full commit
+``8d46546a6674c65f317330b807dd0023b7d6305a``). The pinned port
+reference ``290a8a5`` is three commits ahead with no DTS changes in
+that comparison. At ``8d46546a``, ``surya_defconfig`` sets local
+version ``-FSociety`` and enables DT overlay builds, while appended
+DTB images are disabled. This corroborates the separate DTB section
+observed in the active boot image. It does not establish which DTBO
+was packaged or how the bootloader handles its stale fixups.
