@@ -697,3 +697,18 @@ version ``-FSociety`` and enables DT overlay builds, while appended
 DTB images are disabled. This corroborates the separate DTB section
 observed in the active boot image. It does not establish which DTBO
 was packaged or how the bootloader handles its stale fixups.
+
+Use the pinned FSociety source as the primary 4.14 reference for the
+Surya hardware port, checked against the live device where possible.
+The MIUI dump remains an independent comparison, not the target ROM.
+Do not import 4.14 driver ABIs, root features or flash scripts wholesale.
+
+At ``8d46546a``, the Qualcomm DTS Makefile builds
+``sdmmagpie-idp-overlay.dtbo`` and ``sdmmagpie-idp-overlay-miui.dtbo``
+against ``sdmmagpie.dtb``. Both declare board ID ``<34 0>``. The MIUI
+DTS additionally enables ``qupv3_se11_spi`` with a
+``qcom,spi-msm-codec-slave`` child and a disabled IR LED child. The old
+``build.sh`` stages ``Image.gz``, ``dtb.img``, ``dtbo.img`` and
+``dtbo-miui.img`` into its AnyKernel3 packaging directory. This shows
+that the build produces two overlay variants; it does not identify
+which was installed or make either applicable to the 6.1 base.
