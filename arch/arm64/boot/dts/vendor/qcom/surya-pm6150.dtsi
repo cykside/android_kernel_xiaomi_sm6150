@@ -6,6 +6,7 @@
  */
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/spmi/spmi.h>
+#include <dt-bindings/iio/qcom,spmi-vadc.h>
 #include <dt-bindings/iio/qti_power_supply_iio.h>
 
 &spmi_bus {
@@ -15,13 +16,69 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		/* Hardware layout only; charging policy and ADC inputs are pending. */
+		pm6150_vadc: adc@3100 {
+			compatible = "qcom,spmi-adc5";
+			reg = <0x3100>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			#io-channel-cells = <1>;
+			interrupts = <0x0 0x31 0x0 IRQ_TYPE_EDGE_RISING>;
+			interrupt-names = "eoc-int-en-set";
+			status = "disabled";
+
+			channel@8 {
+				reg = <ADC5_USB_IN_V_16>;
+				label = "usb_in_voltage";
+				qcom,pre-scaling = <1 16>;
+			};
+
+			channel@7 {
+				reg = <ADC5_USB_IN_I>;
+				label = "usb_in_current";
+				qcom,pre-scaling = <1 1>;
+			};
+
+			channel@9 {
+				reg = <ADC5_CHG_TEMP>;
+				label = "chg_temp";
+				qcom,pre-scaling = <1 1>;
+			};
+
+			channel@6 {
+				reg = <ADC5_DIE_TEMP>;
+				label = "die_temp";
+				qcom,pre-scaling = <1 1>;
+			};
+
+			channel@99 {
+				reg = <ADC5_SBUx>;
+				label = "sbux_res";
+				qcom,pre-scaling = <1 3>;
+			};
+
+			channel@83 {
+				reg = <ADC5_VPH_PWR>;
+				label = "vph_voltage";
+				qcom,pre-scaling = <1 3>;
+			};
+		};
+
+		/* Charging policy and the PM6150L connector thermistor are pending. */
 		pm6150_charger: charger {
 			compatible = "qcom,pm6150-smb5";
 			#address-cells = <1>;
 			#size-cells = <0>;
 			#io-channel-cells = <1>;
 			status = "disabled";
+
+			io-channels = <&pm6150_vadc ADC5_USB_IN_V_16>,
+				      <&pm6150_vadc ADC5_USB_IN_I>,
+				      <&pm6150_vadc ADC5_CHG_TEMP>,
+				      <&pm6150_vadc ADC5_DIE_TEMP>,
+				      <&pm6150_vadc ADC5_SBUx>,
+				      <&pm6150_vadc ADC5_VPH_PWR>;
+			io-channel-names = "usb_in_voltage", "usb_in_current",
+					   "chg_temp", "die_temp", "sbux_res", "vph_voltage";
 
 			qcom,chgr@1000 {
 				reg = <0x1000>;

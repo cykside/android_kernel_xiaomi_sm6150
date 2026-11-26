@@ -97,3 +97,11 @@ providers. The charger, PHY and USB wrappers all remain disabled.
 The charger still needs verified ADC inputs, battery data and thermal
 limits. Do not use default driver limits or copy Violet's battery policy.
 The smoke test verifies that the staging nodes remain disabled.
+
+The disabled PM6150 ADC5 node maps the six on-chip SMB5 measurements
+used by Surya's 4.14 charger: USB input voltage/current, charger and die
+temperature, SBU resistance and VPH voltage. The connector temperature
+input is on PM6150L AMUX THM1; its pull-up and thermistor curve still need
+verification against the stock device before it is wired into SMB5.
+Compare the ADC readings to stock before enabling charging; passing the
+DTB test only verifies the wiring description, not the readings.
