@@ -636,3 +636,9 @@ or create dummy labels for these subsystems. Keep the UFS integration
 fixture as a self-contained tree; before any repack, establish what ABL
 will do with the active DTBO rather than assume that supplying a base
 DTB suppresses overlay application.
+
+A local image can be checked without uploading it using
+``python3 scripts/dtc/surya-boot-v2-layout.py surya-boot.img``. The
+checker verifies the observed v2 envelope, gzip prefix, and single FDT
+section, but does not check gzip stream contents, AVB, or whether the
+bootloader will apply the active overlay. It never repacks the image.
