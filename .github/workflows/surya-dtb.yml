@@ -252,6 +252,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y device-tree-compiler python3-libfdt
+      - name: Test UFS provider resolution
+        run: PYTHON=/usr/bin/python3 sh scripts/dtc/test-surya-ufs-providers.sh
       - name: Compare against the pinned MIUI 14.0.1 stock dump
         run: |
           dump=https://gitlab.com/Android-Dumps/poco/surya/-/raw/47617823f73a3288ee5d42c611e0e22a339512ab
@@ -303,6 +305,13 @@ jobs:
             cat "$work/tlmm-users.tsv"
             printf '```\n\n</details>\n'
           } >> "$GITHUB_STEP_SUMMARY"
+          cp "$work/ufs-comparison.txt" "$RUNNER_TEMP/surya-ufs-comparison.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: surya-ufs-comparison
+          path: ${{ runner.temp }}/surya-ufs-comparison.txt
+          if-no-files-found: error
+          retention-days: 7
 
   surya-kernel-image:
     needs: surya-dtb
