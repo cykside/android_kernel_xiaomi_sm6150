@@ -348,3 +348,11 @@ The expected board ID is ``22 0``. The merged tree is not a runtime FDT:
 ABL fixups, selected overlay index, and firmware differences are not
 validated by a successful offline merge. Do not use it as a boot image
 or substitute it for the phone's V14.0.2.0 stock boot components.
+
+The same offline merge, with base/overlay ID checks and a TLMM and
+fixed reserved-memory report, can be run with::
+
+    scripts/dtc/surya-stock-audit.sh BASE.dtb IDP.dtbo out/surya-stock
+
+The second input may also be the decompiled IDP ``.dts`` from the dump.
+The tool never fetches firmware or writes device partitions.
