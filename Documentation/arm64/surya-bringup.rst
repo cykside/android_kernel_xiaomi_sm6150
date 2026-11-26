@@ -793,3 +793,11 @@ preserves the reference ramdisk, recalculates v2 sizes and the legacy
 boot image ID, then checks the resulting section offsets. It neither
 copies nor generates AVB metadata, and refuses an existing output.
 Do not boot, flash, or distribute this fixture as an installer.
+
+To investigate whether the working boot flow supplies overlay content,
+compare markers from the pinned FSociety overlay (``/soc/onewire_gpio``
+and ``/soc/maxim_ds28e16``) between the extracted boot DTB and the live
+OF tree. A marker present only in the live tree demonstrates a
+post-base addition, not necessarily application of the entire active
+DTBO. A marker already present in the base is not discriminatory.
+Do not change the DTBO partition to run this comparison.
