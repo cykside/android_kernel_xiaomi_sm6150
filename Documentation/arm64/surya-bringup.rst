@@ -146,8 +146,8 @@ NT36672C panels
 ---------------
 
 The Huaxing and Tianma timing and DSI command data are staged from the
-4.14 board tree under a disabled panel-data node. They are not attached
-to an SDE/DSI host and no default panel is selected. The smoke test checks
+4.14 board tree under the disabled SM6150 MDP node. No default panel
+is selected. The smoke test checks
 that both 1080x2400 at 120 Hz definitions are present and disabled.
 
 Before attaching them to the 6.1 display host, validate the DSI PHY
@@ -164,13 +164,14 @@ The PM6150L SID 5 nodes describe the LCDB bias regulators and WLED
 backlight using 6.1 bindings and the stock Surya WLED string mask.
 Both providers are disabled. The WLED flash children and automatic
 string calibration are not enabled. Validate the string wiring, current
-limit, and panel rail enable/disable sequence before attaching these
-providers to the SDE/DSI host.
+limit, and panel rail enable/disable sequence before enabling the SDE/DSI host.
 
 Both panels now reference the stock Surya supply table from 4.14
 ``sdmmagpie-sde-display.dtsi``. It describes VDDIO, LAB and IBB votes
 and the 20 ms delay after turning on IBB. The panel nodes also carry
 the DSI0/PHY0 and clock names in the locations the 6.1 parser expects.
-The table does not drive hardware by itself: the future host must map
-``vddio`` to PM6150 L18 and ``lab``/``ibb`` to LCDB LDO/NCP, then validate
-the voltages and reset sequence on the actual panel.
+The disabled DSI host maps ``vddio`` to PM6150 L18 and ``lab``/``ibb``
+to LCDB LDO/NCP. SoC-level SDE, DSI and PHY definitions are shared with
+Violet; its panel selection, supplies and pinctrl stay in its board
+include. Surya still needs its own host pinctrl, PHY mode timing, and
+on-device voltage and reset validation before enabling the display.

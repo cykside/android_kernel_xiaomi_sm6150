@@ -33,7 +33,7 @@ jobs:
           test "$missing" -eq 0
       - name: Build and check the board DTB
         run: |
-          make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150.dtb
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150.dtb vendor/qcom/violet-sm6150.dtb
           dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
           test "$(fdtget -t s "$dtb" / compatible)" = 'xiaomi,surya qcom,sm6150'
           test "$(fdtget -t u "$dtb" / qcom,msm-id)" = '365 0'
@@ -95,12 +95,13 @@ jobs:
       - name: Verify staged NT36672C panel data
         run: |
           dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
-          test "$(fdtget -t s "$dtb" /panel-data status)" = disabled
+          test "$(fdtget -t s "$dtb" /soc/qcom,mdss_mdp@ae00000 status)" = disabled
+          test "$(fdtget -t s "$dtb" /soc/qcom,dsi-display-primary status)" = disabled
           pmic_gpio=/soc/qcom,spmi@c440000/pmic@4/pinctrl@c000
           test "$(fdtget -t s "$dtb" "$pmic_gpio" status)" = disabled
           pmic_gpio_phandle=$(fdtget -t u "$dtb" "$pmic_gpio" phandle)
           for vendor in huaxing tianma; do
-            panel=/panel-data/qcom,mdss_dsi_nt36672c_${vendor}_fhd_video
+            panel=/soc/qcom,mdss_mdp@ae00000/qcom,mdss_dsi_nt36672c_${vendor}_fhd_video
             timing=$panel/qcom,mdss-dsi-display-timings/timing@0
             test "$(fdtget -t s "$dtb" "$panel" status)" = disabled
             test "$(fdtget -t u "$dtb" "$panel" qcom,platform-reset-gpio)" = "$pmic_gpio_phandle 9 0"
@@ -118,11 +119,11 @@ jobs:
           for rail in ldo ncp bst; do
             test "$(fdtget -t s "$dtb" "$display_pmic/qcom,lcdb@ec00/$rail" regulator-name)" = "lcdb_$rail"
           done
-          supplies=/panel-data/panel-supply-entries
+          supplies=/soc/qcom,mdss_mdp@ae00000/panel-supply-entries
           supply_phandle=$(fdtget -t u "$dtb" "$supplies" phandle)
           test "$(fdtget -t u "$dtb" "$supplies/qcom,panel-supply-entry@2" qcom,supply-post-on-sleep)" = 20
           for vendor in huaxing tianma; do
-            panel=/panel-data/qcom,mdss_dsi_nt36672c_${vendor}_fhd_video
+            panel=/soc/qcom,mdss_mdp@ae00000/qcom,mdss_dsi_nt36672c_${vendor}_fhd_video
             test "$(fdtget -t u "$dtb" "$panel" qcom,panel-supply-entries)" = "$supply_phandle"
             test "$(fdtget -t u "$dtb" "$panel" qcom,dsi-ctrl-num)" = 0
             test "$(fdtget -t u "$dtb" "$panel" qcom,dsi-phy-num)" = 0

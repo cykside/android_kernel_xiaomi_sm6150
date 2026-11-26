@@ -1,42 +1,65 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 #include <dt-bindings/gpio/gpio.h>
-/* Keep the stock panel data separate from the unported SDE/DSI host. */
-/ {
-	surya_panel_data: panel-data {
-		status = "disabled";
+#include "sm6150-sde.dtsi"
 
-		surya_panel_supplies: panel-supply-entries {
-			#address-cells = <1>;
-			#size-cells = <0>;
+&sde_dsi {
+	vddio-supply = <&pm6150_l18>;
+	lab-supply = <&lcdb_ldo_vreg>;
+	ibb-supply = <&lcdb_ncp_vreg>;
+	status = "disabled";
+};
 
-			qcom,panel-supply-entry@0 {
-				reg = <0>;
-				qcom,supply-name = "vddio";
-				qcom,supply-min-voltage = <1800000>;
-				qcom,supply-max-voltage = <1904000>;
-				qcom,supply-enable-load = <32000>;
-				qcom,supply-disable-load = <80>;
-			};
+&mdss_dsi0 {
+	status = "disabled";
+};
 
-			qcom,panel-supply-entry@1 {
-				reg = <1>;
-				qcom,supply-name = "lab";
-				qcom,supply-min-voltage = <4600000>;
-				qcom,supply-max-voltage = <6000000>;
-				qcom,supply-enable-load = <100000>;
-				qcom,supply-disable-load = <100>;
-			};
+&mdss_dsi_phy0 {
+	status = "disabled";
+};
 
-			qcom,panel-supply-entry@2 {
-				reg = <2>;
-				qcom,supply-name = "ibb";
-				qcom,supply-min-voltage = <4600000>;
-				qcom,supply-max-voltage = <6000000>;
-				qcom,supply-enable-load = <100000>;
-				qcom,supply-disable-load = <100>;
-				qcom,supply-post-on-sleep = <20>;
-			};
+&smmu_sde_unsec {
+	status = "disabled";
+};
+
+&sde_wb {
+	status = "disabled";
+};
+
+
+&mdss_mdp {
+	status = "disabled";
+
+	surya_panel_supplies: panel-supply-entries {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		qcom,panel-supply-entry@0 {
+			reg = <0>;
+			qcom,supply-name = "vddio";
+			qcom,supply-min-voltage = <1800000>;
+			qcom,supply-max-voltage = <1904000>;
+			qcom,supply-enable-load = <32000>;
+			qcom,supply-disable-load = <80>;
+		};
+
+		qcom,panel-supply-entry@1 {
+			reg = <1>;
+			qcom,supply-name = "lab";
+			qcom,supply-min-voltage = <4600000>;
+			qcom,supply-max-voltage = <6000000>;
+			qcom,supply-enable-load = <100000>;
+			qcom,supply-disable-load = <100>;
+		};
+
+		qcom,panel-supply-entry@2 {
+			reg = <2>;
+			qcom,supply-name = "ibb";
+			qcom,supply-min-voltage = <4600000>;
+			qcom,supply-max-voltage = <6000000>;
+			qcom,supply-enable-load = <100000>;
+			qcom,supply-disable-load = <100>;
+			qcom,supply-post-on-sleep = <20>;
 		};
 	};
 };
