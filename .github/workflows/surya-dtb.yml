@@ -250,6 +250,9 @@ jobs:
           /usr/bin/python3 scripts/dtc/surya-reserved-memory-diff.py \
             "$work/report/stock-surya-merged.dtb" \
             out/surya-dtb-for-audit/surya-sm6150.dtb > "$work/reserved-memory-diff.txt"
+          grep '^partial overlap:' "$work/reserved-memory-diff.txt" | head -n 20 | while IFS= read -r line; do
+            printf '::notice title=Surya reserved memory::%s\n' "${line//%/%25}"
+          done || true
           {
             echo '### MIUI 14.0.1 stock device tree audit (offline)'
             printf '\n```text\n'
@@ -285,8 +288,8 @@ jobs:
       - name: Link the arm64 kernel and build Image.gz
         run: |
           log="$RUNNER_TEMP/surya-kernel-build.log"
-          if ! make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 CC="ccache clang" Image.gz > "$log" 2>&1; then
-            tail -n 100 "$log"
+          set -o pipefail
+          if ! make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 CC="ccache clang" Image.gz 2>&1 | tee "$log"; then
             grep -im 12 -E 'error:|undefined (symbol|reference)|no rule to make target|killed|fatal:' "$log" \
               | while IFS= read -r line; do
                   line=${line//%/%25}
@@ -294,7 +297,6 @@ jobs:
                 done || true
             exit 1
           fi
-          tail -n 30 "$log"
           test -s out/surya/vmlinux
           test -s out/surya/arch/arm64/boot/Image.gz
           gzip -t out/surya/arch/arm64/boot/Image.gz

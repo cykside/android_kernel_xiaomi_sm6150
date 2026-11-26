@@ -379,3 +379,24 @@ records the differences in the job summary. The short-lived CI DTB
 artifact is only an input to this audit, not a flashable deliverable.
 The full Image.gz job also caches Clang compilation results with ccache;
 the first cache fill and every final link/BTF step still take time.
+
+Read-only inspection of the target firmware
+-------------------------------------------
+
+Use the original ``boot.img`` and ``dtbo.img`` from the Surya Global
+V14.0.2.0.SJGMIXM package, not images reconstructed from the V14.0.1.0
+dump. With AOSP's ``unpack_bootimg`` and ``mkdtimg`` on PATH, record
+hashes and the boot and DTBO layouts without modifying the inputs::
+
+    mkdir -p out/surya-stock-v14.0.2/boot
+    sha256sum boot.img dtbo.img > out/surya-stock-v14.0.2/sha256.txt
+    unpack_bootimg --boot_img boot.img --out out/surya-stock-v14.0.2/boot \
+        --format mkbootimg > out/surya-stock-v14.0.2/boot-layout.txt
+    mkdtimg dump dtbo.img > out/surya-stock-v14.0.2/dtbo-layout.txt
+    file out/surya-stock-v14.0.2/boot/*
+
+Check the header version and ramdisk, DTB presence and placement, and
+kernel compression separately. DTBO table order alone does not prove
+which entry ABL loaded. If available, compare the live FDT from the
+same firmware. Do not replace the stock kernel payload based only on
+these reports; reserved memory, TLMM, and UFS remain bring-up gates.
