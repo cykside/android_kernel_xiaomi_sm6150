@@ -854,3 +854,12 @@ replaces that single argument with the built-in ramoops early console.
 The address ``0x9da00000`` is the start of pmsg (1 MiB of crash records
 plus 1 MiB of console after ``0x9d800000``); the early mapping is limited
 to 256 KiB. Persistence through an actual reset is not yet verified.
+
+Violet commit ``1c82ff81f`` keeps the early ramoops console and
+``reboot=warm panic=5`` while removing unrelated debug flags. The
+Surya diagnostic likewise requests warm reboot and a five-second panic
+reboot, without inheriting Violet's address or driver policy flags.
+Before a write-enabled logging trial, verify that the recovery or
+restored kernel can read the same pmsg zone (address, geometry and
+ECC). A warm reboot request cannot ensure DDR preservation across
+watchdog, firmware resets or power loss.

@@ -78,5 +78,7 @@ split_boot;
 [ -s "$SPLITIMG/header" ] || abort 'Missing Android boot header metadata.';
 # The integration DTB disables SE0; keep the other reference boot args.
 patch_cmdline 'earlycon=' 'earlycon=ramoops,0x9da00000,0x40000';
+patch_cmdline 'reboot=' 'reboot=warm';
+patch_cmdline 'panic=' 'panic=5';
 flash_boot;
 ui_print 'Diagnostic complete. No partitions were written.';
