@@ -881,3 +881,13 @@ firmware reported support. Otherwise Linux requests SYSTEM_RESET. A
 watchdog/firmware reset can bypass that path entirely. Log the probed
 SYSTEM_RESET2 capability at notice level in the next trial; a positive
 result is not proof that RAM survived the specific failed boot.
+
+The next captured console log reached an interconnect QoS register
+read in deferred probe and ended in a synchronous external abort
+(about 0.66 seconds). The exact provider is not established by the
+corrupted trace. Apply the existing Violet-style skip-qos workaround
+only to the Surya v2 test DTB's six physical NoC providers and honor
+it on SM6150 restore too. This leaves the interconnect topology and
+RPMh bandwidth votes in place; it is not yet a validated QoS port.
+The same captured log reports that firmware does not support the PSCI
+SYSTEM_RESET2 warm-reset call, but this particular panic log survived.

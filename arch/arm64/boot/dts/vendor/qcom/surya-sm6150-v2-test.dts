@@ -9,3 +9,11 @@
 		soc = "/soc";
 	};
 };
+
+/* Avoid the inherited QoS MMIO programming during bring-up. Keep RPMh votes. */
+&dc_noc { qcom,skip-qos; };
+&gem_noc { qcom,skip-qos; };
+&config_noc { qcom,skip-qos; };
+&system_noc { qcom,skip-qos; };
+&aggre1_noc { qcom,skip-qos; };
+&mmss_noc { qcom,skip-qos; };
