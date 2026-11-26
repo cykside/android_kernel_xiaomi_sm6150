@@ -358,3 +358,8 @@ fixed reserved-memory report, can be run with::
 
 The second input may also be the decompiled IDP ``.dts`` from the dump.
 The tool never fetches firmware or writes device partitions.
+
+The CI stock audit fetches only the two device-tree inputs from the
+pinned dump commit. Its job summary reports the merged board ID, fixed
+reserved-memory ranges and TLMM consumers. It does not retain the dump
+binaries, produce a flashable artifact, or test V14.0.2.0 firmware.

@@ -212,6 +212,38 @@ jobs:
           cat "$RUNNER_TEMP/surya-tlmm-users.tsv"
           grep -Fq $'disabled\t'"$uart"$'\tpinctrl-0\t' "$RUNNER_TEMP/surya-tlmm-users.tsv"
 
+  surya-stock-dt-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install offline device tree tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y device-tree-compiler python3-libfdt
+      - name: Compare against the pinned MIUI 14.0.1 stock dump
+        run: |
+          dump=https://gitlab.com/Android-Dumps/poco/surya/-/raw/47617823f73a3288ee5d42c611e0e22a339512ab
+          work=$(mktemp -d)
+          trap 'rm -rf -- "$work"' EXIT
+          curl --fail --show-error --silent --location --retry 2 --max-time 60 \
+            "$dump/bootimg/12_dtbdump_Qualcomm_Technologies,_Inc._SDMMAGPIE_SoC.dtb" \
+            -o "$work/base.dtb"
+          curl --fail --show-error --silent --location --retry 2 --max-time 60 \
+            "$dump/dtbodts/16_dtbdump_qcom,sdmmagpie-idp.dts" \
+            -o "$work/idp.dts"
+          scripts/dtc/surya-stock-audit.sh "$work/base.dtb" "$work/idp.dts" "$work/report"
+          /usr/bin/python3 scripts/dtc/surya-tlmm-users.py \
+            "$work/report/stock-surya-merged.dtb" /soc/pinctrl@3400000 > "$work/tlmm-users.tsv"
+          {
+            echo '### MIUI 14.0.1 stock device tree audit (offline)'
+            printf '\n```text\n'
+            cat "$work/report/stock-surya-summary.txt"
+            printf '```\n\n<details><summary>TLMM consumers</summary>\n\n```text\n'
+            cat "$work/tlmm-users.tsv"
+            printf '```\n\n</details>\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   surya-kernel-image:
     needs: surya-dtb
     runs-on: ubuntu-24.04
