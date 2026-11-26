@@ -619,7 +619,7 @@ jobs:
           done
 
   surya-kernel-image:
-    if: contains(github.event.pull_request.labels.*.name, 'surya-full-ci') || contains(github.event.pull_request.labels.*.name, 'surya-image-ci')
+    if: contains(github.event.pull_request.labels.*.name, 'surya-full-ci') || contains(github.event.pull_request.labels.*.name, 'surya-image-ci') || contains(github.event.pull_request.labels.*.name, 'surya-twrp-test')
     # Independent build: only the stock audit needs the DTB artifact.
     runs-on: ubuntu-24.04
     timeout-minutes: 55
@@ -828,6 +828,32 @@ jobs:
         with:
           name: surya-v2-pair-OFFLINE-NOT-FOR-FLASH
           path: ${{ runner.temp }}/surya-offline-pair/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Assemble the experimental Surya TWRP package
+        if: contains(github.event.pull_request.labels.*.name, 'surya-twrp-test')
+        run: |
+          work=$(mktemp -d)
+          trap 'rm -rf -- "$work"' EXIT
+          pin=41f04bdb4ee30a44e429c2c1131d5e8bb32b15f1
+          curl -fsSL --retry 2 "https://codeload.github.com/osm0sis/AnyKernel3/tar.gz/$pin" -o "$work/ak3.tar.gz"
+          mkdir "$work/installer"
+          tar -xzf "$work/ak3.tar.gz" -C "$work/installer" --strip-components=1
+          bundle="$RUNNER_TEMP/surya-offline-pair"
+          cp tools/surya-anykernel/anykernel.sh "$work/installer/anykernel.sh"
+          cp "$bundle/Image.gz" "$work/installer/Image.gz"
+          cp "$bundle/surya-base.dtb" "$work/installer/dtb"
+          cp "$bundle/surya-ufs.dtbo-table.test" "$work/installer/dtbo.img"
+          cd "$work/installer"
+          sh -n anykernel.sh
+          sha256sum Image.gz dtb dtbo.img > SURYA-SHA256SUMS
+          zip -q -r "$RUNNER_TEMP/Surya-6.1-EXPERIMENTAL-TWRP.zip" META-INF tools LICENSE anykernel.sh Image.gz dtb dtbo.img SURYA-SHA256SUMS
+          unzip -tq "$RUNNER_TEMP/Surya-6.1-EXPERIMENTAL-TWRP.zip"
+      - uses: actions/upload-artifact@v4
+        if: contains(github.event.pull_request.labels.*.name, 'surya-twrp-test')
+        with:
+          name: Surya-6.1-EXPERIMENTAL-TWRP
+          path: ${{ runner.temp }}/Surya-6.1-EXPERIMENTAL-TWRP.zip
           if-no-files-found: error
           retention-days: 7
       - name: Report compiler cache statistics
