@@ -28,3 +28,36 @@ The Surya DTB smoke test runs on pull requests targeting ``seventeen-6.1``.
 It checks that Kconfig retains the requested settings and that the compiled
 DTB has the expected compatible strings and board IDs. Passing this check
 does not validate the hardware description or make the DTB safe to flash.
+
+Reserved memory comparison
+--------------------------
+
+A source comparison of 4.14 ``sdmmagpie.dtsi`` and the 6.1 vendor
+``sm6150.dtsi`` found the following differences. Values are hexadecimal
+and use start address / size. These are source values, not an ABL or
+runtime memory dump.
+
+================== ====================== ======================
+Region             4.14 sdmmagpie         6.1 SM6150 base
+================== ====================== ======================
+XBL/AOP            85e00000 / 1ff000      85e00000 / 120000
+AOP command DB     inside XBL/AOP         85f20000 / 20000
+CDSP firmware      93900000 / 1e00000     93b00000 / 1e00000
+ADSP firmware      95700000 / 1e00000     95900000 / 1e00000
+WLAN MSA           97500000 / 180000      93900000 / 200000
+Continuous splash  9c000000 / 1700000     9c000000 / f00000
+Display FPS data   9d700000 / 100000      9cf00000 / 100000
+Ramoops            9d800000 / 400000      not in base DTSI
+================== ====================== ======================
+
+The Surya DTS adds the 4.14 ramoops region and its record geometry for
+boot diagnostics. It does not overlap a fixed reservation in the 6.1
+source. Confirm the region against the firmware-provided memory map before
+using it. The smoke test also checks the compiled region and record sizes.
+
+Do not copy the other ranges individually: extending XBL/AOP as in 4.14
+would overlap the separate 6.1 command DB, and shifting CDSP alone would
+overlap 6.1 WLAN MSA. Confirm these as groups using the running 4.14 device's
+live FDT and boot logs, and compare the stock DTB/DTBO from the exact firmware
+version under test. Keep the board DTS out of shipping builds until that
+comparison and an on-device boot test are complete.

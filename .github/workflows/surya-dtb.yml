@@ -32,3 +32,8 @@ jobs:
           test "$(fdtget -t s "$dtb" / compatible)" = 'xiaomi,surya qcom,sm6150'
           test "$(fdtget -t u "$dtb" / qcom,msm-id)" = '365 0'
           test "$(fdtget -t u "$dtb" / qcom,board-id)" = '34 0'
+          pstore=/reserved-memory/ramoops@9d800000
+          test "$(fdtget -t x "$dtb" "$pstore" reg)" = '0 9d800000 0 400000'
+          test "$(fdtget -t x "$dtb" "$pstore" record-size)" = '80000'
+          test "$(fdtget -t x "$dtb" "$pstore" pmsg-size)" = '200000'
+          test "$(fdtget -t x "$dtb" "$pstore" console-size)" = '100000'
