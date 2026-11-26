@@ -1,0 +1,34 @@
+name: Surya DTB smoke test
+
+on:
+  pull_request:
+    branches: [seventeen-6.1]
+
+permissions:
+  contents: read
+
+jobs:
+  surya-dtb:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm lld flex bison device-tree-compiler
+      - name: Configure Surya and verify the fragment
+        run: |
+          make O=out/surya ARCH=arm64 LLVM=1 gki_defconfig vendor/surya.config
+          grep '^CONFIG_' arch/arm64/configs/vendor/surya.config > "$RUNNER_TEMP/surya.config.expected"
+          if grep -Fvx -f out/surya/.config "$RUNNER_TEMP/surya.config.expected"; then
+            echo 'Surya settings above were not retained by Kconfig.' >&2
+            exit 1
+          fi
+      - name: Build and check the board DTB
+        run: |
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150.dtb
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+          test "$(fdtget -t s "$dtb" / compatible)" = 'xiaomi,surya qcom,sm6150'
+          test "$(fdtget -t u "$dtb" / qcom,msm-id)" = '365 0'
+          test "$(fdtget -t u "$dtb" / qcom,board-id)" = '34 0'

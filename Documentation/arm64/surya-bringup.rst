@@ -23,3 +23,8 @@ and PMIC/regulator and storage configuration against Surya firmware. Then
 bring up USB, display (NT36672C Huaxing/Tianma), Novatek SPI touch, haptics,
 battery authentication and charging, connectivity/modem, audio, and camera.
 Android vendor userspace compatibility needs separate validation.
+
+The Surya DTB smoke test runs on pull requests targeting ``seventeen-6.1``.
+It checks that Kconfig retains the requested settings and that the compiled
+DTB has the expected compatible strings and board IDs. Passing this check
+does not validate the hardware description or make the DTB safe to flash.
