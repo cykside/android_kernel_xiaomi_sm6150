@@ -37,3 +37,6 @@ jobs:
           test "$(fdtget -t x "$dtb" "$pstore" record-size)" = '80000'
           test "$(fdtget -t x "$dtb" "$pstore" pmsg-size)" = '200000'
           test "$(fdtget -t x "$dtb" "$pstore" console-size)" = '100000'
+          for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000; do
+            test "$(fdtget -t s "$dtb" "$node" status)" = disabled
+          done

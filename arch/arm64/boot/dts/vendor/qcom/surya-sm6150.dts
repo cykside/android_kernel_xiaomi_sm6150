@@ -25,3 +25,25 @@
 		max-reason = <4>;
 	};
 };
+
+/* Supply routing from 4.14 sdmmagpie-idp.dtsi; not enabled for probing. */
+&ufsphy_mem {
+	compatible = "qcom,ufs-phy-qmp-v3";
+	vdda-phy-supply = <&pm6150_l4>;
+	vdda-pll-supply = <&pm6150l_l3>;
+	vdda-phy-max-microamp = <62900>;
+	vdda-pll-max-microamp = <18300>;
+	status = "disabled";
+};
+
+&ufshc_mem {
+	vdd-hba-supply = <&ufs_phy_gdsc>;
+	vdd-hba-fixed-regulator;
+	vcc-supply = <&pm6150_l19>;
+	vccq2-supply = <&pm6150_l12>;
+	vcc-max-microamp = <600000>;
+	vccq2-max-microamp = <600000>;
+	qcom,vddp-ref-clk-supply = <&pm6150l_l3>;
+	qcom,vddp-ref-clk-max-microamp = <100>;
+	status = "disabled";
+};

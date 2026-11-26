@@ -61,3 +61,14 @@ overlap 6.1 WLAN MSA. Confirm these as groups using the running 4.14 device's
 live FDT and boot logs, and compare the stock DTB/DTBO from the exact firmware
 version under test. Keep the board DTS out of shipping builds until that
 comparison and an on-device boot test are complete.
+
+UFS preparation
+---------------
+
+The Surya DTS maps the UFS controller and QMP V3 PHY supplies to the
+PM6150/PM6150L rails named in 4.14 ``sdmmagpie-idp.dtsi``. Both nodes
+remain disabled. Before enabling them, confirm the firmware rail votes,
+particularly the L3C PLL/reference-clock rail (described as 1.2 V in
+4.14; the 6.1 base permits 1.232–1.260 V), and verify the reset GPIO,
+boot-device NVMEM gate, and UFS link on hardware. The DTB smoke test
+checks that neither node can probe by default.
