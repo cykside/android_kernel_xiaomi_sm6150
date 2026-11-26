@@ -1455,6 +1455,8 @@ static const struct msm_pinctrl_soc_data sdmmagpie_pinctrl = {
 	.groups = sdmmagpie_groups,
 	.ngroups = ARRAY_SIZE(sdmmagpie_groups),
 	.ngpios = 119,
+	/* A bulk direction sweep can touch firmware-owned pads. */
+	.skip_initial_gpio_direction = true;
 
 
 

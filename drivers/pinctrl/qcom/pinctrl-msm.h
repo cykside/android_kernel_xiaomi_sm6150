@@ -187,6 +187,7 @@ struct msm_pinctrl_soc_data {
 	const struct msm_pingroup *groups;
 	unsigned ngroups;
 	unsigned ngpios;
+	bool skip_initial_gpio_direction;
 	bool pull_no_keeper;
 	const char *const *tiles;
 	unsigned int ntiles;

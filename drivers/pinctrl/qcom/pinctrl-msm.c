@@ -1693,6 +1693,7 @@ static int msm_gpio_init(struct msm_pinctrl *pctrl)
 	chip = &pctrl->chip;
 	chip->base = -1;
 	chip->ngpio = ngpio;
+	chip->skip_initial_direction = pctrl->soc->skip_initial_gpio_direction;
 	chip->label = dev_name(pctrl->dev);
 	chip->parent = pctrl->dev;
 	chip->owner = THIS_MODULE;

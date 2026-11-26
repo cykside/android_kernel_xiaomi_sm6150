@@ -863,3 +863,12 @@ Before a write-enabled logging trial, verify that the recovery or
 restored kernel can read the same pmsg zone (address, geometry and
 ECC). A warm reboot request cannot ensure DDR preservation across
 watchdog, firmware resets or power loss.
+
+The first captured 6.1 console log is partially corrupted, but the
+panic trace identifies an asynchronous SError around 0.34 seconds. It
+shows ``readl`` from ``msm_gpio_get_direction`` during GPIO chip
+registration under ``sdmmagpie_pinctrl_probe``. Since SError is
+asynchronous, the exact offending pad or transaction is not proven.
+The follow-up skips only the registration-time GPIO direction sweep
+on SDMMagpie. Explicit direction queries still use the driver callback.
+This is not yet verified on hardware and does not establish UFS status.
