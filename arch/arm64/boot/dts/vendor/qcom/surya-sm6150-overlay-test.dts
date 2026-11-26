@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/dts-v1/;
+/plugin/;
+
+/* Offline experiment only. Not a replacement for the active DTBO. */
+/ {
+	qcom,msm-id = <365 0>;
+	qcom,board-id = <34 0>;
+
+	fragment@0 {
+		target-path = "/";
+
+		__overlay__ {
+			chosen {
+				linux,surya-overlay-test;
+			};
+		};
+	};
+};

@@ -373,6 +373,20 @@ jobs:
           sudo apt-get install -y device-tree-compiler python3-libfdt
       - name: Test offline overlay success and rejection
         run: sh scripts/dtc/test-surya-overlay-check.sh
+      - name: Test a native Surya overlay offline (no partition image)
+        run: |
+          work=$(mktemp -d)
+          trap 'rm -rf -- "$work"' EXIT
+          base=out/surya-dtb-for-audit/surya-sm6150-ufs-test.dtb
+          dtc -@ -I dts -O dtb -o "$work/marker.dtbo" \
+            arch/arm64/boot/dts/vendor/qcom/surya-sm6150-overlay-test.dts
+          test "$(fdtget -t u "$work/marker.dtbo" / qcom,msm-id)" = '365 0'
+          test "$(fdtget -t u "$work/marker.dtbo" / qcom,board-id)" = '34 0'
+          fdtoverlay -i "$base" -o "$work/merged.dtb" "$work/marker.dtbo"
+          fdtget -p "$work/merged.dtb" /chosen | grep -Fx linux,surya-overlay-test
+          for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000 /soc/pinctrl@3400000; do
+            test "$(fdtget -t s "$work/merged.dtb" "$node" status)" = okay
+          done
       - name: Test UFS provider resolution
         run: PYTHON=/usr/bin/python3 sh scripts/dtc/test-surya-ufs-providers.sh
       - name: Compare against the pinned MIUI 14.0.1 stock dump

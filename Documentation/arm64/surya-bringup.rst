@@ -809,3 +809,11 @@ with the FSociety overlay. This does not establish which boot stage
 added the nodes, which payload supplied them, or whether broken fixups
 were ignored. Treat unchanged-DTBO boot of a replacement 6.1 base
 as unvalidated; a successful offline repack is not a flash gate.
+
+An offline marker overlay (``surya-sm6150-overlay-test.dts``) exercises
+an alternative pairing: the 6.1 fixture supplies its staged hardware
+configuration directly, and the matching overlay adds only a marker
+under ``/chosen`` using an explicit root path. This avoids reliance on
+4.14 external labels in the experiment. It is not proof that ABL
+selects or accepts this pair, does not port all active overlay content,
+and is not built into a partition image or published for installation.
