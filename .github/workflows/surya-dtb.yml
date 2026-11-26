@@ -44,6 +44,15 @@ jobs:
           test "$(fdtget -t s "$dtb" / compatible)" = 'xiaomi,surya qcom,sm6150'
           test "$(fdtget -t u "$dtb" / qcom,msm-id)" = '365 0'
           test "$(fdtget -t u "$dtb" / qcom,board-id)" = '34 0'
+          xbl=/reserved-memory/xbl_aop_mem@85e00000
+          fixed_cmd=/reserved-memory/memory@85f20000
+          test "$(fdtget -t x "$dtb" "$xbl" reg)" = '0 85e00000 0 120000'
+          test "$(fdtget -t x "$dtb" "$fixed_cmd" reg)" = '0 85f20000 0 20000'
+          test "$(fdtget -t s "$dtb" "$fixed_cmd" compatible)" = qcom,cmd-db
+          if fdtget "$dtb" /soc/command-db@c3f000c compatible >/dev/null 2>&1; then
+            echo 'Discovery must stay out of the primary Surya DTB during offline audit' >&2
+            exit 1
+          fi
           pstore=/reserved-memory/ramoops@9d800000
           test "$(fdtget -t x "$dtb" "$pstore" reg)" = '0 9d800000 0 400000'
           test "$(fdtget -t x "$dtb" "$pstore" record-size)" = '80000'
@@ -93,9 +102,10 @@ jobs:
             NF != 46 { exit 1 }
             { for (i = 15; i <= NF; i += 2) if ($i != provider) exit 1 }
           ' <<< "$charger_inputs"
-      - name: Compile the staged power, USB and UFS drivers
+      - name: Compile the staged power, USB, UFS and Command DB drivers
         run: |
           make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 \
+            drivers/soc/qcom/cmd-db.o \
             drivers/power/supply/qcom/built-in.a \
             drivers/usb/pd/built-in.a \
             drivers/usb/dwc3/dwc3-msm-core.o \
@@ -220,6 +230,12 @@ jobs:
           test "$(fdtget -t x "$dtb" "$cmd" reg)" = 'c3f000c 8'
           test "$(fdtget -t x "$dtb" "$xbl" reg)" = '0 85e00000 0 1ff000'
           test "$(fdtget -t x "$dtb" "$cmd" memory-region)" = "$(fdtget -t x "$dtb" "$xbl" phandle)"
+          test "$(fdtget -t s "$dtb" "$cmd" compatible)" = qcom,sdmmagpie-cmd-db
+          fdtget "$dtb" "$xbl" no-map >/dev/null
+          if fdtget "$dtb" /reserved-memory/memory@85f20000 reg >/dev/null 2>&1; then
+            echo 'Offline XBL/AOP and fixed Command DB ranges must not overlap' >&2
+            exit 1
+          fi
           ufs=/soc/ufshc@1d84000
           for index in 0 1; do
             if [ "$index" = 0 ]; then
