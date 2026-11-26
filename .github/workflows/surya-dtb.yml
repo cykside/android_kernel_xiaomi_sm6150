@@ -66,6 +66,18 @@ jobs:
           done
           gauge=$pmic/fuel-gauge
           test "$(fdtget -t s "$dtb" "$gauge" status)" = disabled
-          test "$(fdtget -t s "$dtb" "$gauge" io-channel-names)" = 'batt-therm batt-id'
+          test "$(fdtget -t s "$dtb" "$gauge" io-channel-names)" = 'batt-therm batt-id input_current_limited recharge_soc force_recharge charge_done'
           test "$(fdtget -t x "$dtb" "$gauge/qcom,qgauge@4800" reg)" = 4800
           test "$(fdtget -t x "$dtb" "$gauge/qcom,qg-sdam@b600" reg)" = b600
+          charger_phandle=$(fdtget -t x "$dtb" "$pmic/charger" phandle)
+          gauge_phandle=$(fdtget -t x "$dtb" "$gauge" phandle)
+          gauge_inputs=$(fdtget -t x "$dtb" "$gauge" io-channels)
+          charger_inputs=$(fdtget -t x "$dtb" "$pmic/charger" io-channels)
+          awk -v provider="$charger_phandle" '
+            NF != 12 { exit 1 }
+            { for (i = 5; i <= NF; i += 2) if ($i != provider) exit 1 }
+          ' <<< "$gauge_inputs"
+          awk -v provider="$gauge_phandle" '
+            NF != 46 { exit 1 }
+            { for (i = 15; i <= NF; i += 2) if ($i != provider) exit 1 }
+          ' <<< "$charger_inputs"

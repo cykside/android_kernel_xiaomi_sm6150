@@ -389,8 +389,14 @@
 			#size-cells = <0>;
 			#io-channel-cells = <1>;
 			io-channels = <&pm6150_vadc ADC5_BAT_THERM_100K_PU>,
-				      <&pm6150_vadc ADC5_BAT_ID_100K_PU>;
-			io-channel-names = "batt-therm", "batt-id";
+				      <&pm6150_vadc ADC5_BAT_ID_100K_PU>,
+				      <&pm6150_charger PSY_IIO_INPUT_CURRENT_LIMITED>,
+				      <&pm6150_charger PSY_IIO_RECHARGE_SOC>,
+				      <&pm6150_charger PSY_IIO_FORCE_RECHARGE>,
+				      <&pm6150_charger PSY_IIO_CHARGE_DONE>;
+			io-channel-names = "batt-therm", "batt-id",
+					   "input_current_limited", "recharge_soc",
+					   "force_recharge", "charge_done";
 			status = "disabled";
 
 			qcom,qgauge@4800 {

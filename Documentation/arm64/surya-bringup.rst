@@ -126,5 +126,9 @@ SMB5 now references the 6.1 QGauge IIO outputs for battery telemetry.
 Both nodes remain disabled and neither selects a profile. Both stock
 profiles declare the same 100 kOhm battery ID and the board uses a 15%
 match range, so resistance alone cannot distinguish them. Identify the
-pack and firmware variant before linking a profile. The reverse gauge
-links for charger state are not staged here.
+pack and firmware variant before linking a profile. QGauge also references
+SMB5 for input-current limiting, recharge threshold, forced recharge and
+charge completion. The smoke test checks the provider references in both
+directions. Before enabling the nodes, verify that both drivers bind
+without a persistent probe dependency and that the reported charger
+state matches stock.
