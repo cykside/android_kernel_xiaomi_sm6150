@@ -20,11 +20,17 @@ jobs:
       - name: Configure Surya and verify the fragment
         run: |
           make O=out/surya ARCH=arm64 LLVM=1 gki_defconfig vendor/surya.config
-          grep '^CONFIG_' arch/arm64/configs/vendor/surya.config > "$RUNNER_TEMP/surya.config.expected"
-          if grep -Fvx -f out/surya/.config "$RUNNER_TEMP/surya.config.expected"; then
-            echo 'Surya settings above were not retained by Kconfig.' >&2
-            exit 1
-          fi
+          missing=0
+          while IFS= read -r setting; do
+            case "$setting" in CONFIG_*=*) ;; *) continue ;; esac
+            if ! grep -Fxq -- "$setting" out/surya/.config; then
+              symbol=${setting%%=*}
+              actual=$(grep -E "^${symbol}=|^# ${symbol} is not set$" out/surya/.config || true)
+              echo "::error file=arch/arm64/configs/vendor/surya.config::Expected $setting; resolved: ${actual:-absent}"
+              missing=1
+            fi
+          done < arch/arm64/configs/vendor/surya.config
+          test "$missing" -eq 0
       - name: Build and check the board DTB
         run: |
           make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150.dtb
