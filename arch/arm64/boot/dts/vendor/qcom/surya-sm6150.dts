@@ -43,6 +43,8 @@
 };
 
 &ufshc_mem {
+	/* Stock SDMMagpie uses the dedicated UFS_RESET pin, not GPIO 123. */
+	/delete-property/ reset-gpios;
 	vdd-hba-supply = <&ufs_phy_gdsc>;
 	vdd-hba-fixed-regulator;
 	vcc-supply = <&pm6150_l19>;

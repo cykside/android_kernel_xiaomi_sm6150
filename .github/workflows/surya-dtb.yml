@@ -53,6 +53,10 @@ jobs:
                       /soc/ssusb@a600000 /soc/hsusb@a800000; do
             test "$(fdtget -t s "$dtb" "$node" status)" = disabled
           done
+          if fdtget "$dtb" /soc/ufshc@1d84000 reset-gpios >/dev/null 2>&1; then
+            echo 'Surya UFS must not inherit the SM6150 reset GPIO' >&2
+            exit 1
+          fi
           pdphy=/soc/qcom,spmi@c440000/pmic@0/usb-pdphy@1700
           test "$(fdtget -t x "$dtb" "$pdphy" reg)" = '1700'
           test "$(fdtget -t s "$dtb" "$pdphy" status)" = disabled

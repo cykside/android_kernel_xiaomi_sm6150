@@ -417,3 +417,13 @@ The audit now also displays the UFS host/PHY register, interrupt, lane,
 boot-device and reset properties from both compiled trees. Raw GPIO
 phandles are local to each DTB and must not be compared as pin numbers.
 No memory ranges or UFS enablement are changed by these checks.
+
+UFS reset is a concrete incompatibility: stock SDMMagpie uses
+``dev-reset-assert`` and ``dev-reset-deassert`` pinctrl states on the
+dedicated ``ufs_reset`` pad. The pad is group 126 in the SDMMagpie
+table but is not exposed as a GPIO by that driver. The inherited
+6.1 SM6150 ``reset-gpios`` cell 123 corresponds to an SD clock pad in
+the stock table. Surya now drops that GPIO reference. Do not substitute
+GPIO 126: the 6.1 UFS host currently uses a GPIO descriptor for device
+reset; a verified dedicated-pad reset path is still needed. The UFS
+host and PHY remain disabled.
