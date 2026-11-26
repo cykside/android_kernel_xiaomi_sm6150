@@ -269,6 +269,14 @@ jobs:
           test "$(fdtget -t s "$dtb" "$uart" status)" = disabled
           /usr/bin/python3 scripts/dtc/surya-tlmm-users.py "$dtb" "$tlmm" > "$RUNNER_TEMP/surya-tlmm-users.tsv"
           cat "$RUNNER_TEMP/surya-tlmm-users.tsv"
+          active=$(awk -F '\t' '$1 == "available" && !seen[$2]++ {print $2}' "$RUNNER_TEMP/surya-tlmm-users.tsv")
+          count=$(awk 'NF {n++} END {print n+0}' <<< "$active")
+          printf '::notice title=Surya TLMM consumers::%s enabled nodes reference offline TLMM\n' "$count"
+          awk 'NF && n++ < 8 {gsub(/%/, "%25"); printf "::notice title=Surya TLMM review::%s\n", $0}' <<< "$active"
+          {
+            printf '### Enabled consumers of offline SDMMagpie TLMM (%s nodes)\n\n' "$count"
+            printf '\x60\x60\x60text\n%s\n\x60\x60\x60\n' "$active"
+          } >> "$GITHUB_STEP_SUMMARY"
           grep -Fq $'disabled\t'"$uart"$'\tpinctrl-0\t' "$RUNNER_TEMP/surya-tlmm-users.tsv"
 
       - name: Check the Command DB integration fixture (not for flashing)
