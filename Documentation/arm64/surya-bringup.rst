@@ -722,3 +722,9 @@ properties were absent from the pinned DTS. The 4.14 boot Makefile
 uses separate table-packing targets (``dtbo.img`` passes an explicit
 4096-byte page size, ``dtbo-miui.img`` uses the packer's default).
 Neither rule identifies which payload is installed on the device.
+
+CI now compiles the pinned FSociety base and both overlay source
+variants with host ``dtc`` and tests them against that base without
+building a 4.14 kernel. This is a source control experiment, not a
+bit-for-bit recreation of the installed artifacts. No resulting DTB
+or DTBO is published or written to a partition.

@@ -477,6 +477,51 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  surya-fsociety-dt-reference:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: cykside/msm-4.14
+          ref: 8d46546a6674c65f317330b807dd0023b7d6305a
+          path: out/fsociety-reference
+          persist-credentials: false
+          sparse-checkout: |
+            arch/arm64/boot/dts
+            include/dt-bindings
+      - name: Install device tree compiler
+        run: sudo apt-get update && sudo apt-get install -y device-tree-compiler
+      - name: Compile the pinned base and both overlay variants offline
+        run: |
+          src=out/fsociety-reference
+          work=$(mktemp -d)
+          trap 'rm -rf -- "$work"' EXIT
+          for name in sdmmagpie sdmmagpie-idp-overlay sdmmagpie-idp-overlay-miui; do
+            gcc -E -nostdinc -I "$src/include" -undef -D__DTS__ -x assembler-with-cpp \
+              "$src/arch/arm64/boot/dts/qcom/$name.dts" -o "$work/$name.dts"
+            if ! dtc -q -@ -I dts -O dtb -o "$work/$name.dtb" "$work/$name.dts"; then
+              echo "::error title=Surya FSociety reference::Unable to compile $name"
+              exit 1
+            fi
+          done
+          for name in sdmmagpie-idp-overlay sdmmagpie-idp-overlay-miui; do
+            if sh scripts/dtc/surya-overlay-check.sh "$work/sdmmagpie.dtb" "$work/$name.dtb" > "$work/report" 2>&1; then
+              result=applied
+            else
+              result=rejected
+            fi
+            first=$(head -n 1 "$work/report")
+            printf '::notice title=Surya FSociety reference::%s %s; %s\n' "$name" "$result" "${first//%/%25}"
+            {
+              printf '### %s: %s\n\n' "$name" "$result"
+              printf '\x60\x60\x60text\n'
+              cat "$work/report"
+              printf '\x60\x60\x60\n'
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
+
   surya-kernel-image:
     # Independent build: only the stock audit needs the DTB artifact.
     runs-on: ubuntu-24.04
