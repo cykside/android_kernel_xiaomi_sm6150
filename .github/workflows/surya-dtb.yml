@@ -212,6 +212,19 @@ jobs:
           test "$(fdtget -t s "$dtb" "$tlmm" status)" = disabled
           test "$(fdtget -t s "$dtb" /soc/ufshc@1d84000 status)" = disabled
           test "$(fdtget -t s "$dtb" /soc/ufshc@1d84000 pinctrl-names)" = 'dev-reset-assert dev-reset-deassert'
+          ufs=/soc/ufshc@1d84000
+          for index in 0 1; do
+            if [ "$index" = 0 ]; then
+              state="$tlmm/ufs_dev_reset_assert"
+              level=output-low
+            else
+              state="$tlmm/ufs_dev_reset_deassert"
+              level=output-high
+            fi
+            test "$(fdtget -t x "$dtb" "$ufs" "pinctrl-$index")" = "$(fdtget -t x "$dtb" "$state" phandle)"
+            test "$(fdtget -t s "$dtb" "$state/config" pins)" = ufs_reset
+            fdtget "$dtb" "$state/config" "$level" >/dev/null
+          done
           uart=/soc/qcom,qupv3_0_geni_se@8c0000/qcom,qup_uart@0x880000
           test "$(fdtget -t s "$dtb" "$uart" status)" = disabled
           /usr/bin/python3 scripts/dtc/surya-tlmm-users.py "$dtb" "$tlmm" > "$RUNNER_TEMP/surya-tlmm-users.tsv"
@@ -261,8 +274,12 @@ jobs:
               printf '\n%s\n' "$(basename "$tree")"
               for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000; do
                 printf '%s\n' "$node"
-                for property in reg interrupts lanes-per-direction boot_device_type reset-gpios; do
+                for property in reg interrupts lanes-per-direction reset-gpios; do
                   value=$(fdtget -t x "$tree" "$node" "$property" 2>/dev/null || echo absent)
+                  printf '  %s: %s\n' "$property" "$value"
+                done
+                for property in compatible status boot_device_type pinctrl-names reset-names nvmem-cell-names; do
+                  value=$(fdtget -t s "$tree" "$node" "$property" 2>/dev/null || echo absent)
                   printf '  %s: %s\n' "$property" "$value"
                 done
               done
@@ -277,7 +294,7 @@ jobs:
             cat "$work/report/stock-surya-summary.txt"
             printf '\nReserved memory comparison against Linux 6.1:\n'
             cat "$work/reserved-memory-diff.txt"
-            printf '\nUFS controller and PHY comparison (hex cells):\n'
+            printf '\nUFS controller and PHY comparison:\n'
             cat "$work/ufs-comparison.txt"
             printf '```\n\n<details><summary>TLMM consumers</summary>\n\n```text\n'
             cat "$work/tlmm-users.tsv"
