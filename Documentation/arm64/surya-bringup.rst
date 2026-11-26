@@ -978,3 +978,16 @@ Violet so those DT votes are honored without changing their values.
 Do not add Violet's separate mainline RPMh regulator or power-domain
 options solely because they appear in its fragment; verify the live
 consumer and provider binding first.
+
+FSociety's qcom,rpmh-clk-sdmmagpie match uses its SM6150 descriptor.
+The shared CXO, LN_BB2/3 and RF1/2 entries map to the same firmware
+resource names as the 6.1 SM6150 clock descriptor. The latter also
+looks up IP0 eagerly. IP0 is declared by the legacy bus DT, but only
+firmware lookup can confirm its presence. Do not mark it optional
+or override the clock provider without evidence of a failed lookup.
+
+Violet also builds QCOM_PDC in. The inherited Surya SPMI PMIC arbiter
+routes its mandatory periph_irq through the qcom,pdc interrupt domain.
+Build that provider in on Surya rather than relying on the SPMI config
+alone. This supplies the declared interrupt path; it is not evidence
+that the earlier NoC defer was caused by the PDC.
