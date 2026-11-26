@@ -967,3 +967,14 @@ RCG. The Surya v2 GCC compatible selects the SDMMagpie offsets for
 these clocks only. Clock IDs, GCC base, UFS MEM CLKREF and the UFS
 BCR remain unchanged. The rest of the GCC controller is not audited
 by this comparison. This does not diagnose the earlier NoC defer.
+
+Violet config comparison: QCOM_CLK_RPMH is the CXO clock provider,
+separate from QCOM_RPMH transport; QCOM_GDSC_REGULATOR provides vdd-hba.
+Both now build in for Surya. The legacy REGULATOR_RPMH driver matches
+Surya's rpmh-vrm-regulator and rpmh-arc-regulator nodes. It calls the
+proxy-consumer helper, and the inherited PM6150 L4 UFS PHY rail declares
+an enable/current proxy vote. Enable REGULATOR_PROXY_CONSUMER as in
+Violet so those DT votes are honored without changing their values.
+Do not add Violet's separate mainline RPMh regulator or power-domain
+options solely because they appear in its fragment; verify the live
+consumer and provider binding first.
