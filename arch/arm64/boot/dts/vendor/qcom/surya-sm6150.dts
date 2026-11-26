@@ -45,6 +45,10 @@
 &ufshc_mem {
 	/* Stock SDMMagpie uses the dedicated UFS_RESET pin, not GPIO 123. */
 	/delete-property/ reset-gpios;
+	/* Stock Surya UFS does not use the SM6150 boot fuse gate. */
+	/delete-property/ nvmem-cells;
+	/delete-property/ nvmem-cell-names;
+	/delete-property/ boot_device_type;
 	vdd-hba-supply = <&ufs_phy_gdsc>;
 	vdd-hba-fixed-regulator;
 	vcc-supply = <&pm6150_l19>;

@@ -69,8 +69,8 @@ The Surya DTS maps the UFS controller and QMP V3 PHY supplies to the
 PM6150/PM6150L rails named in 4.14 ``sdmmagpie-idp.dtsi``. Both nodes
 remain disabled. Before enabling them, confirm the firmware rail votes,
 particularly the L3C PLL/reference-clock rail (described as 1.2 V in
-4.14; the 6.1 base permits 1.232–1.260 V), and verify the reset GPIO,
-boot-device NVMEM gate, and UFS link on hardware. The DTB smoke test
+4.14; the 6.1 base permits 1.232–1.260 V), and verify dedicated-pad reset
+and the UFS link on hardware. The DTB smoke test
 checks that neither node can probe by default.
 
 USB and Type-C preparation
@@ -438,16 +438,14 @@ SDMMagpie controller switch is validated.
 UFS boot selection and PLL supply
 ---------------------------------
 
-The pinned 4.14 ``sdmmagpie.dtsi`` and ``sdmmagpie-idp.dtsi`` do not
-supply ``boot_conf`` or ``boot_device_type`` for UFS. The current Surya
-DTB inherits both from SM6150: ``boot_conf`` references four bytes at
-QFPROM offset ``0x6070`` (base ``0x00780000``), and the expected value
-is ``4``. The 6.1 host compares bits 5:1 of the first byte against
-that value. An absent or unreadable cell leaves the driver's current
-boot-device default unchanged; a readable mismatch skips host
-initialization. Verify this inherited mapping on target firmware
-before relying on it. Absence in the 4.14 DTS is not proof that the
-fuse or its contents differ.
+Neither the pinned 4.14 sources nor the compiled MIUI 14.0.1 host
+node declare the ``boot_conf`` NVMEM reference. The SM6150 base points
+it at four bytes at QFPROM offset ``0x6070`` (base ``0x00780000``) and
+expects value ``4`` in bits 5:1 of the first byte. A readable mismatch
+skips host initialization. Surya drops that inherited gate so the
+staged host does not depend on an unverified fuse mapping. The driver
+uses its default when the cell is absent. The QFPROM provider and other
+consumers are unchanged; this does not validate probing on hardware.
 
 Stock SDMMagpie L3C allows 1.144–1.256 V and initializes at 1.144 V;
 SM6150 6.1 inherits 1.232–1.260 V with a 1.232 V initial setting.
@@ -455,14 +453,12 @@ The common 6.1 UFS PHY votes 1.2–1.8 V for ``vdda-pll``, so its
 request intersects both ranges. This does not establish that the
 inherited voltage is suitable for Surya. Stock uses L3C for both the
 PHY PLL and the host reference clock, so check both consumers and the
-target DTB constraints before overriding the rail. Neither the fuse
-mapping nor the regulator constraints are changed by this audit.
+target DTB constraints before overriding the rail. The regulator
+constraints are not changed.
 
 The compiled MIUI 14.0.1 audit resolved the same supply roles, but
 confirmed differing regulator constraints (stock vs. Surya 6.1):
 VCC L19 2.944–3.304 V vs. 2.700–3.008 V; VCCQ2 L12
 1.696–1.952 V vs. 1.800–1.950 V; PHY L4 0.824–0.920 V vs.
-0.875–0.975 V. L3C matches the source comparison above. The stock
-host has no NVMEM reference; the Surya host resolves to the inherited
-QFPROM cell. These results are for the offline dump, not the target
+0.875–0.975 V. L3C matches the source comparison above. These results are for the offline dump, not the target
 firmware's live tree. UFS remains disabled.
