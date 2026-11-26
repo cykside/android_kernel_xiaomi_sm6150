@@ -473,7 +473,6 @@
 				     <0x5 0xd8 0x5 IRQ_TYPE_EDGE_BOTH>;
 			interrupt-names = "ovp-irq", "pre-flash-irq",
 					  "flash-irq";
-			qcom,auto-calibration;
 			qcom,string-cfg = <7>;
 			qcom,fs-current-limit = <25000>;
 			qcom,en-cabc;
