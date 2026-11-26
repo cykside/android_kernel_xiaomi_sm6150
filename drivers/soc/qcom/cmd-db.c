@@ -347,11 +347,10 @@ static const struct file_operations cmd_db_debugfs_ops = {
 
 bool cmd_db_is_standalone(void)
 {
-	int ret = cmd_db_ready();
-	u32 standalone = le32_to_cpu(cmd_db_header->reserved) &
-			 CMD_DB_STANDALONE_MASK;
+	if (cmd_db_ready())
+		return false;
 
-	return !ret && standalone;
+	return le32_to_cpu(cmd_db_header->reserved) & CMD_DB_STANDALONE_MASK;
 }
 EXPORT_SYMBOL(cmd_db_is_standalone);
 
@@ -387,9 +386,9 @@ static int cmd_db_dev_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	bool discover = of_device_is_compatible(dev->of_node, "qcom,sdmmagpie-cmd-db");
+	struct cmd_db_header *header;
 	struct reserved_mem *rmem;
 	phys_addr_t base, size;
-	int ret;
 
 	if (discover) {
 		struct device_node *region;
@@ -423,25 +422,17 @@ static int cmd_db_dev_probe(struct platform_device *pdev)
 		size = rmem->size;
 	}
 
-	if (size < sizeof(*cmd_db_header))
+	if (size < sizeof(*header))
 		return -EINVAL;
-	cmd_db_header = devm_memremap(dev, base, size, MEMREMAP_WC);
-	if (IS_ERR(cmd_db_header)) {
-		ret = PTR_ERR(cmd_db_header);
-		cmd_db_header = NULL;
-		return ret;
-	}
-
-	if (!cmd_db_magic_matches(cmd_db_header)) {
-		dev_err(&pdev->dev, "Invalid Command DB Magic\n");
-		cmd_db_header = NULL;
-		return -EINVAL;
-	}
-
-	if (discover && !cmd_db_layout_valid(cmd_db_header, size)) {
-		cmd_db_header = NULL;
+	header = devm_memremap(dev, base, size, MEMREMAP_WC);
+	if (IS_ERR(header))
+		return PTR_ERR(header);
+	if (!cmd_db_magic_matches(header))
+		return dev_err_probe(dev, -EINVAL, "Invalid Command DB Magic\n");
+	if (discover && !cmd_db_layout_valid(header, size))
 		return dev_err_probe(dev, -EINVAL, "Invalid Command DB layout\n");
-	}
+
+	cmd_db_header = header;
 
 	debugfs_create_file("cmd-db", 0400, NULL, NULL, &cmd_db_debugfs_ops);
 
