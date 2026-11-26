@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
+#include <dt-bindings/gpio/gpio.h>
 /* Keep the stock panel data separate from the unported SDE/DSI host. */
 / {
 	surya_panel_data: panel-data {
@@ -9,3 +10,14 @@
 
 #include "dsi-panel-nt36672c-huaxing-fhd-video.dtsi"
 #include "dsi-panel-nt36672c-tianma-fhd-video.dtsi"
+
+/* Stock Surya signals shared by both panel variants. */
+&dsi_nt36672c_huaxing_fhd_video {
+	qcom,platform-te-gpio = <&tlmm 10 GPIO_ACTIVE_HIGH>;
+	qcom,platform-reset-gpio = <&pm6150l_gpios 9 GPIO_ACTIVE_HIGH>;
+};
+
+&dsi_nt36672c_tianma_fhd_video {
+	qcom,platform-te-gpio = <&tlmm 10 GPIO_ACTIVE_HIGH>;
+	qcom,platform-reset-gpio = <&pm6150l_gpios 9 GPIO_ACTIVE_HIGH>;
+};

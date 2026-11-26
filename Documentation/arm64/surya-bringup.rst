@@ -154,3 +154,8 @@ Before attaching them to the 6.1 display host, validate the DSI PHY
 settings and topology, ABL panel selection, TE on TLMM GPIO 10, reset on
 PM6150L GPIO 9, and LAB/IBB and WLED supplies. Test the actual panel
 variant and bring up a stable single mode before testing dynamic refresh.
+
+Both staged panel nodes now describe the stock TE and reset wiring.
+The PM6150L GPIO controller used for reset is present but disabled, so
+this change does not toggle a pin. Host-side pinctrl, power rails,
+backlight, and reset sequencing remain to be validated before probing.

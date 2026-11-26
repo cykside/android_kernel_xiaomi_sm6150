@@ -426,6 +426,16 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 
+		pm6150l_gpios: pinctrl@c000 {
+			compatible = "qcom,pm6150l-gpio";
+			reg = <0xc000>;
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+			status = "disabled";
+		};
+
 		pm6150l_vadc: adc@3100 {
 			compatible = "qcom,spmi-adc5";
 			reg = <0x3100>;

@@ -94,10 +94,16 @@ jobs:
         run: |
           dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
           test "$(fdtget -t s "$dtb" /panel-data status)" = disabled
+          pmic_gpio=/soc/qcom,spmi@c440000/pmic@4/pinctrl@c000
+          test "$(fdtget -t s "$dtb" "$pmic_gpio" status)" = disabled
+          pmic_gpio_phandle=$(fdtget -t u "$dtb" "$pmic_gpio" phandle)
           for vendor in huaxing tianma; do
             panel=/panel-data/qcom,mdss_dsi_nt36672c_${vendor}_fhd_video
             timing=$panel/qcom,mdss-dsi-display-timings/timing@0
             test "$(fdtget -t s "$dtb" "$panel" status)" = disabled
+            test "$(fdtget -t u "$dtb" "$panel" qcom,platform-reset-gpio)" = "$pmic_gpio_phandle 9 0"
+            te=$(fdtget -t u "$dtb" "$panel" qcom,platform-te-gpio)
+            test "${te#* }" = '10 0'
             test "$(fdtget -t u "$dtb" "$timing" qcom,mdss-dsi-panel-width)" = 1080
             test "$(fdtget -t u "$dtb" "$timing" qcom,mdss-dsi-panel-height)" = 2400
             test "$(fdtget -t u "$dtb" "$timing" qcom,mdss-dsi-panel-framerate)" = 120
