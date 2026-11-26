@@ -136,3 +136,7 @@ jobs:
             test "$(fdtget -t x "$dtb" "$panel" qcom,mdss-dsi-t-clk-pre)" = 26
             test "$(fdtget -t x "$dtb" "$panel" qcom,mdss-dsi-t-clk-post)" = 4
           done
+      - name: Compile the SM6150 display stack
+        run: |
+          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 \
+            techpack/display/built-in.a drivers/clk/qcom/dispcc-sm6150.o

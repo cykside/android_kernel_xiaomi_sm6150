@@ -183,3 +183,13 @@ whose known board configuration uses 40 per-lane timing bytes. Do not
 pad the stock table or copy Violet's values. Also, the current SM6150
 pinctrl driver does not expose the stock ``mdp_vsync`` mux on GPIO 10;
 verify the SoC pinmux selection before adding a host pinctrl state.
+
+The Surya fragment selects the downstream SM6150 display stack and the
+matching display clock controller, which CI compiles separately. The
+6.1 DSI driver can calculate PHY timing on enable when the DT has no
+explicit timing bytes. For a first single-mode hardware test, validate
+that calculated timing against the real lane rate rather than porting
+incompatible bytes. The stock 4.14 sdmmagpie pinctrl table also puts
+GPIO 10 in the NORTH tile and selects ``mdp_vsync`` at mux slot 1; the
+6.1 table puts it in EAST and uses slot 1 for ``qup13``. Leave the shared
+mux table unchanged until the Surya pinctrl variant is established.
