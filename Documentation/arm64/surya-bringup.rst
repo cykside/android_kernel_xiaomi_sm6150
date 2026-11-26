@@ -308,3 +308,21 @@ its live FDT (``/sys/firmware/fdt``) and early boot log as well.
    the first test instead of writing partitions. Capture boot logs and
    confirm that storage and boot userspace work. Do not flash until a
    temporary boot has succeeded and a stock recovery path is verified.
+
+Stock dump reference (MIUI V14.0.1.0.SJGMIXM)
+--------------------------------------------
+
+The `Android Dumps Surya snapshot <https://gitlab.com/Android-Dumps/poco/surya/-/tree/47617823f73a3288ee5d42c611e0e22a339512ab>`_
+identifies Android 12 (SKQ1.211019.001). Its ``bootimg`` directory
+lists an extracted kernel and multiple base DTBs; the SDMMagpie base
+candidate is ``12_dtbdump_Qualcomm_Technologies,_Inc._SDMMAGPIE_SoC.dtb``.
+The decompiled ``dtbodts/16_dtbdump_qcom,sdmmagpie-idp.dts`` has
+``qcom,msm-id = <0x16d 0>`` and ``qcom,board-id = <0x22 0>``, matching
+the 6.1 stub. Its ``__fixups__`` show that it is an overlay, not a live
+FDT. Match it with the base DTB before comparing the effective board
+configuration. The prefix ``16`` is a dump filename, not proof of the
+bootloader-selected DTBO index.
+
+The extracted components are useful for DT comparison but do not
+establish the original boot header, image placement, or AVB metadata.
+Use the original firmware images for that part of the boot audit.
