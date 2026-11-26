@@ -606,3 +606,10 @@ their PHYs were still independently available. The offline UFS fixture
 now disables those PHYs too and checks for non-proxy references to its
 UFS supplies. Proxy behavior still needs validation. The primary Surya
 DTB retains its existing USB and regulator configuration.
+
+``surya-sm6150-ufs-test.dts`` additionally enables the UFS host and PHY
+for a compile-only integration check. CI checks the host-to-PHY link,
+the PHY reset provider, the named device reset states, and the enabled
+supply consumers. This fixture is not packaged or published as a boot
+artifact. The primary DTB still disables UFS; hardware behavior,
+active DTBO compatibility and recovery are not verified by this check.

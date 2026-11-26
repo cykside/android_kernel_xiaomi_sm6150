@@ -320,6 +320,27 @@ jobs:
             grep -Fx "    qcom,init-voltage: $voltage" "$RUNNER_TEMP/surya-integration-ufs.txt"
           done
 
+      - name: Check the UFS integration fixture (not for flashing)
+        run: |
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150-ufs-test.dtb
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-ufs-test.dtb
+          host=/soc/ufshc@1d84000
+          phy=/soc/ufsphy_mem@1d87000
+          test "$(fdtget -t s "$dtb" "$host" status)" = okay
+          test "$(fdtget -t s "$dtb" "$phy" status)" = okay
+          test "$(fdtget -t x "$dtb" "$host" phys)" = "$(fdtget -t x "$dtb" "$phy" phandle)"
+          test "$(fdtget -t x "$dtb" "$phy" resets)" = "$(fdtget -t x "$dtb" "$host" phandle) 0"
+          test "$(fdtget -t s "$dtb" "$host" pinctrl-names)" = 'dev-reset-assert dev-reset-deassert'
+          /usr/bin/python3 scripts/dtc/surya-ufs-providers.py "$dtb" > "$RUNNER_TEMP/surya-ufs-test.txt"
+          awk -v host="$host" -v phy="$phy" '
+            $1 == "available:" && $3 != "proxy-supply" {
+              if ($2 == host) h++;
+              else if ($2 == phy) p++;
+              else {print; unexpected++}
+            }
+            END {exit (unexpected || h != 4 || p != 2)}
+          ' "$RUNNER_TEMP/surya-ufs-test.txt"
+
       - uses: actions/upload-artifact@v4
         with:
           name: surya-dtb-for-audit
