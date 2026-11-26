@@ -845,6 +845,8 @@ jobs:
           cp "$bundle/surya-base.dtb" "$work/installer/dtb"
           cp "$bundle/surya-ufs.dtbo-table.test" "$work/installer/dtbo.img"
           cd "$work/installer"
+          cp tools/ak3-core.sh "$work/original-core.sh"
+          cp "$GITHUB_WORKSPACE/tools/surya-anykernel/boot-test.sh" "$work/boot-test.sh"
           python3 - <<'PYTHON'
           from pathlib import Path
 
@@ -859,11 +861,23 @@ jobs:
           sha256sum Image.gz dtb dtbo.img > SURYA-SHA256SUMS
           zip -q -r "$RUNNER_TEMP/Surya-6.1-TWRP-DIAGNOSTIC-NO-WRITE.zip" META-INF tools LICENSE anykernel.sh Image.gz dtb dtbo.img SURYA-SHA256SUMS
           unzip -tq "$RUNNER_TEMP/Surya-6.1-TWRP-DIAGNOSTIC-NO-WRITE.zip"
+          cp "$work/original-core.sh" tools/ak3-core.sh
+          cp "$work/boot-test.sh" anykernel.sh
+          sh -n anykernel.sh
+          zip -q -r "$RUNNER_TEMP/Surya-6.1-TWRP-BOOT-TEST-RAMOOPS.zip" META-INF tools LICENSE anykernel.sh Image.gz dtb dtbo.img SURYA-SHA256SUMS
+          unzip -tq "$RUNNER_TEMP/Surya-6.1-TWRP-BOOT-TEST-RAMOOPS.zip"
       - uses: actions/upload-artifact@v4
         if: contains(github.event.pull_request.labels.*.name, 'surya-twrp-test')
         with:
           name: Surya-6.1-TWRP-DIAGNOSTIC-NO-WRITE
           path: ${{ runner.temp }}/Surya-6.1-TWRP-DIAGNOSTIC-NO-WRITE.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: contains(github.event.pull_request.labels.*.name, 'surya-twrp-test')
+        with:
+          name: Surya-6.1-TWRP-BOOT-TEST-RAMOOPS
+          path: ${{ runner.temp }}/Surya-6.1-TWRP-BOOT-TEST-RAMOOPS.zip
           if-no-files-found: error
           retention-days: 7
       - name: Report compiler cache statistics
