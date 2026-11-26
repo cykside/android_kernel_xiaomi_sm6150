@@ -72,3 +72,18 @@ particularly the L3C PLL/reference-clock rail (described as 1.2 V in
 4.14; the 6.1 base permits 1.232–1.260 V), and verify the reset GPIO,
 boot-device NVMEM gate, and UFS link on hardware. The DTB smoke test
 checks that neither node can probe by default.
+
+USB and Type-C preparation
+--------------------------
+
+The USB nodes in ``sm6150-usb.dtsi`` are available by default. The Surya
+DTS explicitly disables both controller wrappers until role detection is
+ready. The fragment selects the downstream DWC3 MSM and QUSB2 PHY drivers;
+GKI already selects the ConfigFS FunctionFS gadget support needed by ADB.
+
+The 4.14 ``sdmmagpie.dtsi`` routes primary USB events through the PM6150
+PD PHY, charger and EUD extcon providers. The generic 6.1 SM6150 base does
+not supply the same board-specific PMIC policy nodes. Do not copy Violet's
+charger configuration or force peripheral mode to bypass role detection.
+Port the Surya PMIC/Type-C event path first, then verify VBUS detection,
+USB role changes and gadget enumeration on hardware before testing ADB.

@@ -47,3 +47,12 @@
 	qcom,vddp-ref-clk-max-microamp = <100>;
 	status = "disabled";
 };
+
+/* USB role detection requires the Surya PMIC and Type-C policy nodes. */
+&usb0 {
+	status = "disabled";
+};
+
+&usb1 {
+	status = "disabled";
+};
