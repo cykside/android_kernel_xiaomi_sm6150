@@ -219,3 +219,18 @@ with reset on TLMM GPIO 63 and IRQ on GPIO 26. Both the host and the
 client remain disabled. The stock DTS lists AW8624 and DRV2624; identify
 the populated chip before choosing a driver. Waveforms, calibration
 and actuator voltage settings are deliberately not imported here.
+
+Full kernel link check
+----------------------
+
+After the smoke test passes, CI builds ``Image.gz`` with the same Surya
+fragment and tests the compressed image. This catches kernel-wide
+compile and link failures that the individual driver checks cannot see.
+To reproduce locally, configure the tree as above, install the usual
+kernel build dependencies (including ``pahole`` for BTF), then run::
+
+    make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 Image.gz
+    gzip -t out/surya/arch/arm64/boot/Image.gz
+
+The job does not package a boot image, publish a flashable artifact, or
+assert that the resulting kernel can boot on Surya.

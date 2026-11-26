@@ -163,3 +163,22 @@ jobs:
           irq=$(fdtget -t u "$dtb" "$haptic" irq-gpio)
           test "${reset#* }" = '63 0'
           test "${irq#* }" = '26 0'
+
+  surya-kernel-image:
+    needs: surya-dtb
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install kernel build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm lld flex bison bc libelf-dev libssl-dev dwarves
+      - name: Resolve the Surya configuration
+        run: make O=out/surya ARCH=arm64 LLVM=1 gki_defconfig vendor/surya.config
+      - name: Link the arm64 kernel and build Image.gz
+        run: |
+          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 Image.gz
+          test -s out/surya/vmlinux
+          test -s out/surya/arch/arm64/boot/Image.gz
+          gzip -t out/surya/arch/arm64/boot/Image.gz
