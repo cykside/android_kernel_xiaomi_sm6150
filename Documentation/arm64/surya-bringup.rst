@@ -363,3 +363,19 @@ The CI stock audit fetches only the two device-tree inputs from the
 pinned dump commit. Its job summary reports the merged board ID, fixed
 reserved-memory ranges and TLMM consumers. It does not retain the dump
 binaries, produce a flashable artifact, or test V14.0.2.0 firmware.
+
+After obtaining both compiled trees, list different fixed reservations
+and partially overlapping ranges (even when node names changed)::
+
+    /usr/bin/python3 scripts/dtc/surya-reserved-memory-diff.py \
+        out/surya-stock/stock-surya-merged.dtb \
+        out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+
+This comparison excludes dynamic reservations and ABL fixups. An overlap
+is a review item, not an instruction to change either address.
+
+CI compares the merged stock ranges with the compiled 6.1 DTB and
+records the differences in the job summary. The short-lived CI DTB
+artifact is only an input to this audit, not a flashable deliverable.
+The full Image.gz job also caches Clang compilation results with ccache;
+the first cache fill and every final link/BTF step still take time.

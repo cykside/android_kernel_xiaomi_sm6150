@@ -212,11 +212,23 @@ jobs:
           cat "$RUNNER_TEMP/surya-tlmm-users.tsv"
           grep -Fq $'disabled\t'"$uart"$'\tpinctrl-0\t' "$RUNNER_TEMP/surya-tlmm-users.tsv"
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: surya-dtb-for-audit
+          path: out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+          if-no-files-found: error
+          retention-days: 3
+
   surya-stock-dt-audit:
+    needs: surya-dtb
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: surya-dtb-for-audit
+          path: out/surya-dtb-for-audit
       - name: Install offline device tree tools
         run: |
           sudo apt-get update
@@ -235,10 +247,15 @@ jobs:
           scripts/dtc/surya-stock-audit.sh "$work/base.dtb" "$work/idp.dts" "$work/report"
           /usr/bin/python3 scripts/dtc/surya-tlmm-users.py \
             "$work/report/stock-surya-merged.dtb" /soc/pinctrl@3400000 > "$work/tlmm-users.tsv"
+          /usr/bin/python3 scripts/dtc/surya-reserved-memory-diff.py \
+            "$work/report/stock-surya-merged.dtb" \
+            out/surya-dtb-for-audit/surya-sm6150.dtb > "$work/reserved-memory-diff.txt"
           {
             echo '### MIUI 14.0.1 stock device tree audit (offline)'
             printf '\n```text\n'
             cat "$work/report/stock-surya-summary.txt"
+            printf '\nReserved memory comparison against Linux 6.1:\n'
+            cat "$work/reserved-memory-diff.txt"
             printf '```\n\n<details><summary>TLMM consumers</summary>\n\n```text\n'
             cat "$work/tlmm-users.tsv"
             printf '```\n\n</details>\n'
@@ -248,18 +265,27 @@ jobs:
     needs: surya-dtb
     runs-on: ubuntu-24.04
     timeout-minutes: 55
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.cache/surya-ccache
+      CCACHE_MAXSIZE: 600M
+      CCACHE_COMPILERCHECK: content
     steps:
       - uses: actions/checkout@v4
       - name: Install kernel build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm lld flex bison bc libelf-dev libssl-dev dwarves
+          sudo apt-get install -y clang llvm lld flex bison bc libelf-dev libssl-dev dwarves ccache
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: surya-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: surya-ccache-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: Resolve the Surya configuration
         run: make O=out/surya ARCH=arm64 LLVM=1 gki_defconfig vendor/surya.config
       - name: Link the arm64 kernel and build Image.gz
         run: |
           log="$RUNNER_TEMP/surya-kernel-build.log"
-          if ! make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 Image.gz > "$log" 2>&1; then
+          if ! make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 CC="ccache clang" Image.gz > "$log" 2>&1; then
             tail -n 100 "$log"
             grep -im 12 -E 'error:|undefined (symbol|reference)|no rule to make target|killed|fatal:' "$log" \
               | while IFS= read -r line; do
@@ -272,3 +298,6 @@ jobs:
           test -s out/surya/vmlinux
           test -s out/surya/arch/arm64/boot/Image.gz
           gzip -t out/surya/arch/arm64/boot/Image.gz
+      - name: Report compiler cache statistics
+        if: always()
+        run: ccache --show-stats
