@@ -21,6 +21,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang llvm lld flex bison bc libelf-dev libssl-dev device-tree-compiler python3-libfdt
+      - name: Test offline stock DT audit with synthetic inputs
+        run: scripts/dtc/test-surya-stock-audit.sh
       - name: Configure Surya and verify the fragment
         run: |
           make O=out/surya ARCH=arm64 LLVM=1 gki_defconfig vendor/surya.config
