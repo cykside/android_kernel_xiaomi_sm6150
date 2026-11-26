@@ -778,3 +778,11 @@ capacity. The read-only boot tool also accepts ``--avb`` to inspect an
 existing image's terminal footer and its vbmeta location. A missing
 footer does not rule out external vbmeta verification, and this check
 does not verify signatures or change verified boot settings.
+
+The active boot partition has a terminal ``AVBf`` footer at
+``0x07ffffc0``. It reports version 1.0, original image size
+``0xe44000``, vbmeta offset ``0xe44000``, and vbmeta size ``0x380``.
+The original size equals the page-aligned end of the observed v2 DTB
+section. This establishes footer presence, not signature validity or
+bootloader acceptance. Do not copy the footer or vbmeta unchanged to
+an image with a replacement payload.
