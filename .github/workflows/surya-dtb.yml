@@ -105,6 +105,8 @@ jobs:
           ' <<< "$charger_inputs"
       - name: Compile the staged power, USB, UFS and Command DB drivers
         run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/surya-driver-build.log"
           make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 \
             drivers/soc/qcom/cmd-db.o \
             drivers/power/supply/qcom/built-in.a \
@@ -115,7 +117,12 @@ jobs:
             drivers/phy/qualcomm/phy-qcom-ufs-qmp-v3.o \
             drivers/regulator/qpnp-lcdb-regulator.o \
             drivers/video/backlight/qcom-spmi-wled.o \
-            drivers/pinctrl/qcom/pinctrl-sdmmagpie.o
+            drivers/gpio/gpiolib.o \
+            drivers/pinctrl/qcom/pinctrl-msm.o \
+            drivers/pinctrl/qcom/pinctrl-sdmmagpie.o 2>&1 | tee "$log" || {
+              awk '/error:|[Ee]rror [0-9]|No rule to make target/ {print "::error::" $0}' "$log"
+              exit 1
+            }
       - name: Verify staged NT36672C panel data
         run: |
           dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
