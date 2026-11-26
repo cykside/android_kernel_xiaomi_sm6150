@@ -658,3 +658,11 @@ treated as identical. Do not repack the 6.1 fixture expecting the
 active overlay to merge. A useful control is to try that exact overlay
 against the single FDT extracted from the working boot image; even a
 successful control does not prove what ABL applies at boot.
+
+The working FSociety boot image's extracted FDT provided all 158
+external symbols for the active DTBO, but the local control still
+returned ``FDT_ERR_BADOVERLAY``. Missing symbols therefore do not
+explain the control failure. Inspect the active overlay's fragment
+structure and fixups before drawing conclusions about ABL. The
+working boot image alone does not prove that ABL applies this payload
+with the same rules as libfdt, or that it applies it at all.
