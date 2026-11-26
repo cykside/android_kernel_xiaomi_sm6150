@@ -4,6 +4,10 @@ on:
   pull_request:
     branches: [seventeen-6.1]
 
+concurrency:
+  group: surya-bringup-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

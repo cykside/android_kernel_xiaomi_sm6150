@@ -285,3 +285,26 @@ references and accounts for disabled ancestors. It is a starting point:
 legacy vendor properties and ``interrupts-extended`` need manual review.
 CI prints the audit report and checks that it includes the disabled SE0
 UART pinctrl reference.
+
+Gates for the first boot test
+-----------------------------
+
+Use an exact stock firmware build for the target device. Collect the
+original ``boot.img``, ``dtbo.img``, and any separate ``dtb.img`` or
+``vendor_boot.img`` provided by that release. Record the firmware build
+and Android version. Do not publish device-unique partitions or logs
+containing identifiers. If the running stock kernel exposes it, collect
+its live FDT (``/sys/firmware/fdt``) and early boot log as well.
+
+1. Confirm the board and DTBO selection, boot image header, kernel
+   compression, ramdisk, and DTB placement from the original images.
+2. Compare the live FDT's reserved ranges and TLMM resources with the
+   6.1 DTS. Validate the regulator and UFS configuration before enabling
+   storage, and establish a working early log path before changing UART.
+3. Require both the DTB smoke test and the full kernel link to pass.
+   Repack a test image using the stock layout and preserve an untouched
+   stock image for recovery. Do not use the offline TLMM audit DTB.
+4. If the unlocked bootloader supports temporary boot, use that for
+   the first test instead of writing partitions. Capture boot logs and
+   confirm that storage and boot userspace work. Do not flash until a
+   temporary boot has succeeded and a stock recovery path is verified.
