@@ -728,3 +728,11 @@ variants with host ``dtc`` and tests them against that base without
 building a 4.14 kernel. This is a source control experiment, not a
 bit-for-bit recreation of the installed artifacts. No resulting DTB
 or DTBO is published or written to a partition.
+
+In run ``45815561402``, both rebuilt FSociety variants compiled and
+both were rejected by the host overlay tool even though all 158
+external symbols were present in the same-revision base. This
+reproduces the rejection at the outcome level; it does not establish
+that the rebuilt and installed overlays fail for the same reason.
+The reference job reports the libfdt error and checks the decompiled
+exact display node without relying on unit-address path matching.
