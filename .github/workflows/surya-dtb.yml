@@ -210,6 +210,8 @@ jobs:
           test "$(fdtget -t x "$dtb" "$tlmm" reg)" = '3400000 dc2000 17c000f0 60'
           test "$(fdtget -t u "$dtb" "$tlmm" interrupts)" = '0 208 4'
           test "$(fdtget -t s "$dtb" "$tlmm" status)" = disabled
+          test "$(fdtget -t s "$dtb" /soc/ufshc@1d84000 status)" = disabled
+          test "$(fdtget -t s "$dtb" /soc/ufshc@1d84000 pinctrl-names)" = 'dev-reset-assert dev-reset-deassert'
           uart=/soc/qcom,qupv3_0_geni_se@8c0000/qcom,qup_uart@0x880000
           test "$(fdtget -t s "$dtb" "$uart" status)" = disabled
           /usr/bin/python3 scripts/dtc/surya-tlmm-users.py "$dtb" "$tlmm" > "$RUNNER_TEMP/surya-tlmm-users.tsv"

@@ -14,6 +14,7 @@
 #include <linux/platform_device.h>
 #include <linux/phy/phy.h>
 #include <linux/gpio/consumer.h>
+#include <linux/pinctrl/consumer.h>
 #include <linux/reset-controller.h>
 #include <linux/interconnect.h>
 #include <linux/phy/phy-qcom-ufs.h>
@@ -1772,15 +1773,54 @@ static int remove_group_qos(struct qos_cpu_group *qcg)
 	return 0;
 }
 
-static void ufs_qcom_device_reset_ctrl(struct ufs_hba *hba, bool asserted)
+static int ufs_qcom_device_reset_ctrl(struct ufs_hba *hba, bool asserted)
 {
 	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
 
-	/* reset gpio is optional */
-	if (!host->device_reset)
-		return;
+	if (host->device_reset)
+		gpiod_set_value_cansleep(host->device_reset, asserted);
+	else if (host->reset_pinctrl)
+		return pinctrl_select_state(host->reset_pinctrl, asserted ?
+				host->reset_assert : host->reset_deassert);
 
-	gpiod_set_value_cansleep(host->device_reset, asserted);
+	return 0;
+}
+
+static int ufs_qcom_init_reset_pinctrl(struct ufs_hba *hba)
+{
+	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+	struct device *dev = hba->dev;
+	int ret;
+
+	if (host->device_reset || !dev->of_node ||
+	    (of_property_match_string(dev->of_node, "pinctrl-names",
+				      "dev-reset-assert") < 0 &&
+	     of_property_match_string(dev->of_node, "pinctrl-names",
+				      "dev-reset-deassert") < 0))
+		return 0;
+
+	host->reset_pinctrl = devm_pinctrl_get(dev);
+	if (IS_ERR(host->reset_pinctrl))
+		return dev_err_probe(dev, PTR_ERR(host->reset_pinctrl),
+				     "failed to acquire reset pinctrl\n");
+
+	host->reset_assert = pinctrl_lookup_state(host->reset_pinctrl,
+						 "dev-reset-assert");
+	if (IS_ERR(host->reset_assert))
+		return dev_err_probe(dev, PTR_ERR(host->reset_assert),
+				     "missing reset assert state\n");
+
+	host->reset_deassert = pinctrl_lookup_state(host->reset_pinctrl,
+						   "dev-reset-deassert");
+	if (IS_ERR(host->reset_deassert))
+		return dev_err_probe(dev, PTR_ERR(host->reset_deassert),
+				     "missing reset deassert state\n");
+
+	ret = ufs_qcom_device_reset_ctrl(hba, true);
+	if (ret)
+		return dev_err_probe(dev, ret, "failed to assert device reset\n");
+
+	return 0;
 }
 
 static int ufs_qcom_suspend(struct ufs_hba *hba, enum ufs_pm_op pm_op,
@@ -1808,8 +1848,8 @@ static int ufs_qcom_suspend(struct ufs_hba *hba, enum ufs_pm_op pm_op,
 			err = ufs_qcom_unvote_qos_all(hba);
 	}
 
-	if (!err && ufs_qcom_is_link_off(hba) && host->device_reset)
-		ufs_qcom_device_reset_ctrl(hba, true);
+	if (!err && ufs_qcom_is_link_off(hba))
+		err = ufs_qcom_device_reset_ctrl(hba, true);
 
 	ufs_qcom_log_str(host, "&,%d,%d,%d,%d,%d,%d\n",
 			pm_op, hba->rpm_lvl, hba->spm_lvl, hba->uic_link_state,
@@ -3819,6 +3859,10 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 		goto out_variant_clear;
 	}
 
+	err = ufs_qcom_init_reset_pinctrl(hba);
+	if (err)
+		goto out_variant_clear;
+
 	err = ufs_qcom_bus_register(host);
 	if (err)
 		goto out_variant_clear;
@@ -5010,18 +5054,22 @@ static int ufs_qcom_device_reset(struct ufs_hba *hba)
 		dev_warn(hba->dev, "%s: host reset returned %d\n",
 				 __func__, ret);
 
-	/* reset gpio is optional */
-	if (!host->device_reset)
+	/* Device reset is optional. */
+	if (!host->device_reset && !host->reset_pinctrl)
 		return -EOPNOTSUPP;
 
 	/*
 	 * The UFS device shall detect reset pulses of 1us, sleep for 10us to
 	 * be on the safe side.
 	 */
-	ufs_qcom_device_reset_ctrl(hba, true);
+	ret = ufs_qcom_device_reset_ctrl(hba, true);
+	if (ret)
+		return ret;
 	usleep_range(10, 15);
 
-	ufs_qcom_device_reset_ctrl(hba, false);
+	ret = ufs_qcom_device_reset_ctrl(hba, false);
+	if (ret)
+		return ret;
 	usleep_range(10, 15);
 
 	return 0;
@@ -6112,8 +6160,8 @@ static void ufs_qcom_shutdown(struct platform_device *pdev)
 	 * reset, so deassert ufs device reset line after UFS device shutdown
 	 * to ensure the UFS_RESET TLMM register value is POR value
 	 */
-	if (!host->bypass_pbl_rst_wa)
-		ufs_qcom_device_reset_ctrl(hba, false);
+	if (!host->bypass_pbl_rst_wa && ufs_qcom_device_reset_ctrl(hba, false))
+		dev_warn(hba->dev, "failed to deassert device reset at shutdown\n");
 }
 
 static int ufs_qcom_system_suspend(struct device *dev)

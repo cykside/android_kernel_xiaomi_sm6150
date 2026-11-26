@@ -571,6 +571,9 @@ struct ufs_qcom_host {
 	struct reset_controller_dev rcdev;
 
 	struct gpio_desc *device_reset;
+	struct pinctrl *reset_pinctrl;
+	struct pinctrl_state *reset_assert;
+	struct pinctrl_state *reset_deassert;
 	int max_hs_gear;
 	int limit_tx_hs_gear;
 	int limit_rx_hs_gear;

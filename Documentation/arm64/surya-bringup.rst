@@ -427,3 +427,10 @@ the stock table. Surya now drops that GPIO reference. Do not substitute
 GPIO 126: the 6.1 UFS host currently uses a GPIO descriptor for device
 reset; a verified dedicated-pad reset path is still needed. The UFS
 host and PHY remain disabled.
+
+The 6.1 Qualcomm UFS driver now accepts the stock pair of named reset
+pinctrl states when no reset GPIO is present. The existing GPIO path
+has priority and is unchanged for boards that use it. The state pair
+is wired only in the offline TLMM audit DTB, where UFS and TLMM both
+stay disabled. It is not wired into the primary Surya DTB until the
+SDMMagpie controller switch is validated.

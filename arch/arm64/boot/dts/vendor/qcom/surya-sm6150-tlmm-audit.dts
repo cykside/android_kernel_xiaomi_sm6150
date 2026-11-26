@@ -14,3 +14,10 @@
 &qupv3_se0_2uart {
 	status = "disabled";
 };
+
+/* Reference the dedicated pad only with the SDMMagpie pin mapping. */
+&ufshc_mem {
+	pinctrl-names = "dev-reset-assert", "dev-reset-deassert";
+	pinctrl-0 = <&ufs_dev_reset_assert>;
+	pinctrl-1 = <&ufs_dev_reset_deassert>;
+};
