@@ -870,6 +870,12 @@ jobs:
           unzip -tq "$RUNNER_TEMP/Surya-6.1-TWRP-DIAGNOSTIC-NO-WRITE.zip"
           cp "$work/original-core.sh" tools/ak3-core.sh
           cp "$work/boot-test.sh" anykernel.sh
+          # Make UFS available even if ABL does not apply the trial DTBO.
+          # Reapplying the matching DTBO is harmless: it only sets these statuses.
+          fdtoverlay -i "$bundle/surya-base.dtb" -o dtb "$bundle/surya-ufs.dtbo"
+          test "$(fdtget -t s dtb /soc/ufshc@1d84000 status)" = okay
+          test "$(fdtget -t s dtb /soc/ufsphy_mem@1d87000 status)" = okay
+          sha256sum Image.gz dtb dtbo.img > SURYA-SHA256SUMS
           sh -n anykernel.sh
           zip -q -r "$RUNNER_TEMP/Surya-6.1-TWRP-BOOT-TEST-RAMOOPS.zip" META-INF tools LICENSE anykernel.sh Image.gz dtb dtbo.img SURYA-SHA256SUMS
           unzip -tq "$RUNNER_TEMP/Surya-6.1-TWRP-BOOT-TEST-RAMOOPS.zip"

@@ -891,3 +891,12 @@ it on SM6150 restore too. This leaves the interconnect topology and
 RPMh bandwidth votes in place; it is not yet a validated QoS port.
 The same captured log reports that firmware does not support the PSCI
 SYSTEM_RESET2 warm-reset call, but this particular panic log survived.
+
+With QoS programming skipped, the device reached Android first-stage
+init. It timed out waiting for metadata, super and vbmeta_system, and
+panicked after init exited. The captured console also reports TBU
+probe failures and missing RPMh resources. Neither these warnings nor
+the absence of UFS messages proves why storage was not discovered.
+As a controlled next trial, merge the existing UFS enable overlay into
+the DTB embedded by the flashable package, so UFS status does not depend
+on ABL applying the external DTBO. Keep the matching DTBO alongside it.
