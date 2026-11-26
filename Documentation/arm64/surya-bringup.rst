@@ -786,3 +786,10 @@ The original size equals the page-aligned end of the observed v2 DTB
 section. This establishes footer presence, not signature validity or
 bootloader acceptance. Do not copy the footer or vbmeta unchanged to
 an image with a replacement payload.
+
+``surya-boot-v2-repack-offline.py`` creates an unsigned local fixture
+from a reference image, replacement gzip kernel and one DTB. It
+preserves the reference ramdisk, recalculates v2 sizes and the legacy
+boot image ID, then checks the resulting section offsets. It neither
+copies nor generates AVB metadata, and refuses an existing output.
+Do not boot, flash, or distribute this fixture as an installer.
