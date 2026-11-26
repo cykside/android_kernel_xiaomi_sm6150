@@ -819,3 +819,15 @@ without ``-@``, following Violet's local DTB convention. This avoids
 reliance on other 4.14 external labels in the experiment. It is not proof that ABL
 selects or accepts this pair, does not port all active overlay content,
 and is not built into a partition image or published for installation.
+
+Fast iteration CI
+~~~~~~~~~~~~~~~~~
+
+Ordinary PR updates run the Surya DTB and staged driver smoke tests,
+including UFS PHY compilation. The expensive jobs are opt-in:
+``surya-image-ci`` builds the full image and offline bundle,
+``surya-stock-ci`` runs the stock dump audit, and ``surya-fsociety-ci``
+rebuilds the FSociety reference. ``surya-full-ci`` enables all three.
+These are PR labels; adding a label triggers a new run and the label
+remains effective for future pushes until removed. Run full CI before
+packaging a device test. A skipped job is not evidence that it passed.

@@ -3,6 +3,7 @@ name: Surya DTB smoke test
 on:
   pull_request:
     branches: [seventeen-6.1]
+    types: [opened, synchronize, reopened, labeled]
 
 concurrency:
   group: surya-bringup-pr-${{ github.event.pull_request.number }}
@@ -367,6 +368,7 @@ jobs:
           retention-days: 3
 
   surya-stock-dt-audit:
+    if: contains(github.event.pull_request.labels.*.name, 'surya-full-ci') || contains(github.event.pull_request.labels.*.name, 'surya-stock-ci')
     needs: surya-dtb
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -508,6 +510,7 @@ jobs:
           retention-days: 7
 
   surya-fsociety-dt-reference:
+    if: contains(github.event.pull_request.labels.*.name, 'surya-full-ci') || contains(github.event.pull_request.labels.*.name, 'surya-fsociety-ci')
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
@@ -611,6 +614,7 @@ jobs:
           done
 
   surya-kernel-image:
+    if: contains(github.event.pull_request.labels.*.name, 'surya-full-ci') || contains(github.event.pull_request.labels.*.name, 'surya-image-ci')
     # Independent build: only the stock audit needs the DTB artifact.
     runs-on: ubuntu-24.04
     timeout-minutes: 55
