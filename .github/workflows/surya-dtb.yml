@@ -274,11 +274,11 @@ jobs:
               printf '\n%s\n' "$(basename "$tree")"
               for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000; do
                 printf '%s\n' "$node"
-                for property in reg interrupts lanes-per-direction reset-gpios; do
+                for property in reg interrupts lanes-per-direction boot_device_type reset-gpios; do
                   value=$(fdtget -t x "$tree" "$node" "$property" 2>/dev/null || echo absent)
                   printf '  %s: %s\n' "$property" "$value"
                 done
-                for property in compatible status boot_device_type pinctrl-names reset-names nvmem-cell-names; do
+                for property in compatible status pinctrl-names reset-names nvmem-cell-names; do
                   value=$(fdtget -t s "$tree" "$node" "$property" 2>/dev/null || echo absent)
                   printf '  %s: %s\n' "$property" "$value"
                 done
