@@ -781,6 +781,27 @@ jobs:
           entry = struct.pack('>8I', len(overlay), 64, 0, 0, 0, 0, 0, 0)
           (bundle / 'surya-ufs.dtbo-table.test').write_bytes(table + entry + overlay)
           PYTHON
+          work=$(mktemp -d)
+          trap 'rm -rf -- "$work"' EXIT
+          python3 - "$bundle/surya-ufs.dtbo-table.test" "$work/extracted.dtbo" <<'PYTHON'
+          import struct
+          import sys
+          from pathlib import Path
+
+          image = Path(sys.argv[1]).read_bytes()
+          header = struct.unpack_from('>8I', image)
+          if header != (0xd7b7ab1e, len(image), 32, 32, 1, 32, 4096, 0):
+              raise SystemExit(f'Unexpected DTBO table header: {header}')
+          size, offset, *metadata = struct.unpack_from('>8I', image, header[5])
+          if offset != 64 or offset + size != len(image) or any(metadata):
+              raise SystemExit('Unexpected DTBO entry offset, size, or metadata')
+          Path(sys.argv[2]).write_bytes(image[offset:offset + size])
+          PYTHON
+          cmp "$bundle/surya-ufs.dtbo" "$work/extracted.dtbo"
+          fdtoverlay -i "$bundle/surya-base.dtb" -o "$work/merged.dtb" "$work/extracted.dtbo"
+          for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000; do
+            test "$(fdtget -t s "$work/merged.dtb" "$node" status)" = okay
+          done
           cat > "$bundle/README.txt" <<'EOF'
           POCO X3 NFC (surya), Linux 6.1, offline test components only.
           This archive is NOT an AnyKernel3 installer and contains no flashable boot image. The .test DTBO table is for offline format inspection only.
