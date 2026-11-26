@@ -385,11 +385,7 @@ jobs:
           fdtget -p "$candidate" /__symbols__ | LC_ALL=C sort -u > "$work/symbols.txt"
           test -s "$work/symbols.txt"
           LC_ALL=C comm -23 "$work/fixups.txt" "$work/symbols.txt" > "$work/missing-fixups.txt"
-          while IFS= read -r label; do
-            target=$(fdtget -t s "$work/base.dtb" /__symbols__ "$label" 2>/dev/null || printf '%s' '(not in stock base)')
-            printf '%s\t%s\n' "$label" "$target"
-          done < "$work/missing-fixups.txt" > "$work/missing-targets.tsv"
-          if fdtoverlay -i "$candidate" -o "$work/merged-test.dtb" "$work/idp.dtbo" > "$work/apply.txt" 2>&1; then
+          if sh scripts/dtc/surya-overlay-check.sh "$candidate" "$work/idp.dtbo" "$work/base.dtb" > "$work/apply.txt" 2>&1; then
             overlay_result=applied
           else
             overlay_result=rejected
@@ -402,7 +398,7 @@ jobs:
           {
             printf '### Stock overlay against the compile-only UFS DTB: %s\n\n' "$overlay_result"
             printf '\x60\x60\x60text\nMissing fixup symbols (%s):\n' "$missing"
-            cat "$work/missing-targets.tsv" "$work/apply.txt"
+            cat "$work/apply.txt"
             printf '\x60\x60\x60\n'
           } >> "$GITHUB_STEP_SUMMARY"
 

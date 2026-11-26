@@ -642,3 +642,10 @@ A local image can be checked without uploading it using
 checker verifies the observed v2 envelope, gzip prefix, and single FDT
 section, but does not check gzip stream contents, AVB, or whether the
 bootloader will apply the active overlay. It never repacks the image.
+
+The same non-destructive overlay test is available locally with
+``sh scripts/dtc/surya-overlay-check.sh BASE.dtb surya-active.dtbo``.
+It needs ``fdtget`` and ``fdtoverlay``. The base for this test is the
+symbol-enabled Surya UFS integration DTB, not the primary DTB. The
+script reports missing labels and deletes its temporary merge. It
+never writes a boot image or a partition.
