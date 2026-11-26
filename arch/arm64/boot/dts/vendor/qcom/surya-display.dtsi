@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0-only
+
+/* Keep the stock panel data separate from the unported SDE/DSI host. */
+/ {
+	surya_panel_data: panel-data {
+		status = "disabled";
+	};
+};
+
+#include "dsi-panel-nt36672c-huaxing-fhd-video.dtsi"
+#include "dsi-panel-nt36672c-tianma-fhd-video.dtsi"

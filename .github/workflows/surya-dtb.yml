@@ -90,3 +90,16 @@ jobs:
             drivers/iio/adc/qcom-spmi-adc5.o \
             drivers/ufs/host/ufs-qcom.o \
             drivers/phy/qualcomm/phy-qcom-ufs-qmp-v3.o
+      - name: Verify staged NT36672C panel data
+        run: |
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+          test "$(fdtget -t s "$dtb" /panel-data status)" = disabled
+          for vendor in huaxing tianma; do
+            panel=/panel-data/qcom,mdss_dsi_nt36672c_${vendor}_fhd_video
+            timing=$panel/qcom,mdss-dsi-display-timings/timing@0
+            test "$(fdtget -t s "$dtb" "$panel" status)" = disabled
+            test "$(fdtget -t u "$dtb" "$timing" qcom,mdss-dsi-panel-width)" = 1080
+            test "$(fdtget -t u "$dtb" "$timing" qcom,mdss-dsi-panel-height)" = 2400
+            test "$(fdtget -t u "$dtb" "$timing" qcom,mdss-dsi-panel-framerate)" = 120
+            test -n "$(fdtget -t bx "$dtb" "$timing" qcom,mdss-dsi-on-command)"
+          done

@@ -141,3 +141,16 @@ compiles the selected SMB5, QGauge, USB-PD, DWC3, ADC5 and UFS code using
 the resolved Surya configuration. This is an object-level check, not a
 full kernel link or an on-device probe test. The workflow does not
 produce a flashable artifact.
+
+NT36672C panels
+---------------
+
+The Huaxing and Tianma timing and DSI command data are staged from the
+4.14 board tree under a disabled panel-data node. They are not attached
+to an SDE/DSI host and no default panel is selected. The smoke test checks
+that both 1080x2400 at 120 Hz definitions are present and disabled.
+
+Before attaching them to the 6.1 display host, validate the DSI PHY
+settings and topology, ABL panel selection, TE on TLMM GPIO 10, reset on
+PM6150L GPIO 9, and LAB/IBB and WLED supplies. Test the actual panel
+variant and bring up a stable single mode before testing dynamic refresh.
