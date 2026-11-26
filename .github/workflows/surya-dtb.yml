@@ -885,6 +885,8 @@ jobs:
             exit 1
           fi
           grep -qx qcom,skip-qos <<< "$aggre_properties"
+          ramoops_properties=$(fdtget -p dtb /reserved-memory/ramoops@9d800000)
+          grep -qx no-map <<< "$ramoops_properties"
           test "$(fdtget -t s dtb "$host" reset-names)" = rst
           test "$(fdtget -t s dtb "$host" pinctrl-names)" = 'dev-reset-assert dev-reset-deassert'
           test "$(fdtget -t s dtb "$host" interconnect-names)" = 'ufs-ddr cpu-ufs'

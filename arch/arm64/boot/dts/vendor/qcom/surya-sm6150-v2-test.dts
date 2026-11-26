@@ -32,3 +32,8 @@
 &ufsphy_mem {
 	/delete-property/ resets;
 };
+
+/* Keep this persistent region out of the linear RAM mapping for earlycon. */
+&{/reserved-memory/ramoops@9d800000} {
+	no-map;
+};
