@@ -371,6 +371,7 @@ void deferred_probe_extend_timeout(void)
 static const char * const surya_storage_paths[] = {
 	"/soc/ufshc@1d84000",
 	"/soc/ufsphy_mem@1d87000",
+	"/soc/interconnect@16e0000",
 	"/soc/interconnect@1700000",
 	"/soc/interconnect@1620000",
 	"/soc/clock-controller@100000",

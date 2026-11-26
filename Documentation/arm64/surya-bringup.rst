@@ -942,3 +942,20 @@ not hardware validation. Violet's PS_HOLD option is implemented by
 qcom-pon; adding the property to a vendor qpnp-power-on node would
 not use that implementation. Do not change Surya PON ownership or
 restart-reason programming based on the Violet DT alone.
+
+FSociety's SDMMagpie bus DTS at ``8d46546a`` declares CE0, QUP0,
+SN14 and IP0 from the inherited 6.1 aggre1_noc BCM list, but not CN1
+or SN3. It declares neither SN3 nor SN5 from the failing System NoC
+lookups. Its UFS CPU/config endpoint uses CN0 and the DDR endpoint
+uses MC0 and ACV. These are source declarations, not a dump of the
+firmware Command DB. This discrepancy does not explain provider
+registration by itself: 6.1's RPMh provider probe does not return the
+individual BCM lookup error. Do not globally delete or rename BCMs
+based on this comparison.
+
+The FSociety bus DT maps ``aggre1_noc-base`` to ``0x16e0000/0x11080``
+and ``aggre2_noc-base`` to ``0x1700000/0x1f080``. The inherited SM6150
+aggre1 node used the latter base address. Match the SDMMagpie aggre1
+resource in the Surya v2 DTB only, preserving its phandle consumers,
+RPMh votes and skip-qos. This corrects a reference mismatch; mapping the
+old region alone has not been established as the cause of deferred probe.

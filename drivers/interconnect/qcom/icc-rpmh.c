@@ -362,8 +362,8 @@ static struct regmap *qcom_icc_rpmh_map(struct platform_device *pdev,
 		return NULL;
 
 	base = devm_ioremap(dev, res->start, resource_size(res));
-	if (IS_ERR(base))
-		return ERR_CAST(base);
+	if (!base)
+		return ERR_PTR(-ENOMEM);
 
 	return devm_regmap_init_mmio(dev, base, desc->config);
 }
@@ -491,12 +491,14 @@ int qcom_icc_rpmh_probe(struct platform_device *pdev)
 
 	qp->regmap = qcom_icc_rpmh_map(pdev, desc);
 	if (IS_ERR(qp->regmap))
-		return PTR_ERR(qp->regmap);
+		return dev_err_probe(dev, PTR_ERR(qp->regmap),
+				     "failed to map NoC registers\n");
 
 
 	qp->num_clks = devm_clk_bulk_get_all(qp->dev, &qp->clks);
 	if (qp->num_clks < 0)
-		return qp->num_clks;
+		return dev_err_probe(dev, qp->num_clks,
+				     "failed to acquire NoC bulk clocks\n");
 
 	for (i = 0; i < qp->num_bcms; i++)
 		qcom_icc_bcm_init(qp, qp->bcms[i], dev);
@@ -544,8 +546,10 @@ int qcom_icc_rpmh_probe(struct platform_device *pdev)
 	}
 
 	ret = icc_provider_register(provider);
-	if (ret)
+	if (ret) {
+		dev_err_probe(dev, ret, "failed to register NoC provider\n");
 		goto err_remove_nodes;
+	}
 
 	platform_set_drvdata(pdev, qp);
 

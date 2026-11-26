@@ -877,7 +877,8 @@ jobs:
           test "$(fdtget -t s dtb /soc/ufsphy_mem@1d87000 status)" = okay
           host=/soc/ufshc@1d84000
           phy=/soc/ufsphy_mem@1d87000
-          aggre=/soc/interconnect@1700000
+          aggre=/soc/interconnect@16e0000
+          test "$(fdtget -t x dtb "$aggre" reg)" = '16e0000 11080'
           phy_properties=$(fdtget -p dtb "$phy")
           aggre_properties=$(fdtget -p dtb "$aggre")
           if grep -qx resets <<< "$phy_properties" || grep -qx clocks <<< "$aggre_properties"; then

@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Offline fixture only: exercise the same single-symbol scheme as Violet. */
+/* SDMMagpie names 0x1700000 aggre2, not aggre1. */
+#define SM6150_AGGRE1_NOC_UNIT_ADDRESS 16e0000
+#define SM6150_AGGRE1_NOC_REG 0x16e0000 0x11080
 #include "surya-sm6150-cmd-db-test.dts"
 
 / {
