@@ -17,9 +17,28 @@ def cells(value):
     return [item[0] for item in struct.iter_unpack('>I', value)]
 
 
+def supply_users(fdt, providers, node=0, enabled=True):
+    status = prop(fdt, node, 'status')
+    enabled = enabled and (status is None or status in (b'okay\0', b'ok\0'))
+    offset = fdt.first_property_offset(node, libfdt.QUIET_NOTFOUND)
+    while offset >= 0:
+        value = fdt.get_property_by_offset(offset)
+        if value.name.endswith('-supply') and len(value) == 4:
+            handle, = cells(value)
+            if handle in providers:
+                state = 'available' if enabled else 'disabled'
+                print(f'  {state}: {fdt.get_path(node)} {value.name} -> {providers[handle]}')
+        offset = fdt.next_property_offset(offset, libfdt.QUIET_NOTFOUND)
+    child = fdt.first_subnode(node, libfdt.QUIET_NOTFOUND)
+    while child >= 0:
+        supply_users(fdt, providers, child, enabled)
+        child = fdt.next_subnode(child, libfdt.QUIET_NOTFOUND)
+
+
 def report(path):
     fdt = libfdt.Fdt(Path(path).read_bytes())
     print(f'\n{Path(path).name}: resolved UFS providers')
+    providers = {}
     for name, refs in (
         ('ufshc@1d84000', ('vdd-hba-supply', 'vcc-supply', 'vccq2-supply',
                             'qcom,vddp-ref-clk-supply', 'nvmem-cells')),
@@ -40,7 +59,10 @@ def report(path):
                 if target < 0:
                     print(f'  {ref}: unresolved phandle {handle:#x}')
                     continue
-                print(f'  {ref}: {fdt.get_path(target)}')
+                target_path = fdt.get_path(target)
+                print(f'  {ref}: {target_path}')
+                if ref.endswith('-supply'):
+                    providers[handle] = target_path
                 names = ('reg',) if ref == 'nvmem-cells' else (
                     'regulator-min-microvolt', 'regulator-max-microvolt',
                     'qcom,init-voltage')
@@ -51,6 +73,9 @@ def report(path):
                         text = ' '.join(hex(i) if field == 'reg' else str(i)
                                         for i in values)
                         print(f'    {field}: {text}')
+
+    print('  UFS supply consumers (DT status, not runtime votes):')
+    supply_users(fdt, providers)
 
 
 if __name__ == '__main__':

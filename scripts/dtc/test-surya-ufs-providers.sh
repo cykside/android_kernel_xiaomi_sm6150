@@ -13,6 +13,10 @@ cat > "$work/test.dts" <<'DTS'
 		regulator-min-microvolt = <1144000>;
 		regulator-max-microvolt = <1256000>;
 	};
+	shared-consumer {
+		status = "disabled";
+		vdd-supply = <0x42>;
+	};
 	qfprom {
 		#address-cells = <1>;
 		#size-cells = <1>;
@@ -45,3 +49,4 @@ grep -Fx '    regulator-max-microvolt: 1256000' "$work/report"
 grep -Fx '  nvmem-cells: /qfprom/boot-config@6070' "$work/report"
 grep -Fx '    reg: 0x6070 0x4' "$work/report"
 grep -Fx '  vcc-supply: absent' "$work/report"
+grep -Fx '  disabled: /shared-consumer vdd-supply -> /regulator' "$work/report"

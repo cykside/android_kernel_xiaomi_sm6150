@@ -376,6 +376,7 @@ jobs:
           for tree in stock-surya-merged.dtb surya-sm6150.dtb; do
             providers=$(awk -v tree="$tree" '
               /resolved UFS providers/ {show = index($0, tree ":") == 1}
+              /UFS supply consumers/ {show = 0}
               show && NF {sub(/^ +/, ""); printf "%s; ", $0}
             ' "$work/ufs-comparison.txt")
             printf '::notice title=Surya UFS providers::%s\n' "${providers//%/%25}"
