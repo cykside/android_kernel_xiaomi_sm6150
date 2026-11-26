@@ -683,6 +683,45 @@ jobs:
               print(f'{field}: {value:#x} ({value} bytes)')
           print('```')
           PYTHON
+      - name: Round-trip an unsigned Surya boot v2 fixture (offline only)
+        run: |
+          python3 - <<'PYTHON'
+          import runpy
+          import struct
+          import tempfile
+          from pathlib import Path
+
+          boot = Path('out/surya/arch/arm64/boot')
+          kernel = boot / 'Image.gz'
+          dtb = boot / 'dts/vendor/qcom/surya-sm6150-ufs-test.dtb'
+          old_kernel = bytes.fromhex('1f8b08')  # Synthetic prefix, not a bootable kernel.
+          old_dtb = struct.pack('>II', 0xd00dfeed, 40) + bytes(32)
+          ramdisk = b'reference-ramdisk-fixture' * 301
+          header = bytearray(1660)
+          header[:8] = b'ANDROID!'
+          for offset, value in ((8, len(old_kernel)), (16, len(ramdisk)),
+                                (36, 4096), (40, 2), (1644, 1660),
+                                (1648, len(old_dtb)), (1652, 0x01f00000)):
+              struct.pack_into('<I', header, offset, value)
+
+          tools = runpy.run_path('scripts/dtc/surya-boot-v2-repack-offline.py')
+          with tempfile.TemporaryDirectory() as directory:
+              reference = Path(directory) / 'reference.img'
+              output = Path(directory) / 'surya.unsigned-fixture.img'
+              reference.write_bytes(b''.join(bytes(section) + bytes(-len(section) % 4096)
+                                             for section in (header, old_kernel, ramdisk, old_dtb))
+                                    + b'AVBf' + bytes(60))
+              layout = tools['repack'](reference, kernel, dtb, output)
+              image = output.read_bytes()
+              for offset, data in ((layout['kernel_offset'], kernel.read_bytes()),
+                                   (layout['ramdisk_offset'], ramdisk),
+                                   (layout['dtb_offset'], dtb.read_bytes())):
+                  if image[offset:offset + len(data)] != data:
+                      raise SystemExit(f'Payload mismatch at {offset:#x}')
+              if image[-64:-60] == b'AVBf':
+                  raise SystemExit('Offline repack unexpectedly carried the reference footer')
+          print('Surya v2 round-trip passed; no image retained or published.')
+          PYTHON
       - name: Report compiler cache statistics
         if: always()
         run: ccache --show-stats
