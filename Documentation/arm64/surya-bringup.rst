@@ -166,3 +166,11 @@ Both providers are disabled. The WLED flash children and automatic
 string calibration are not enabled. Validate the string wiring, current
 limit, and panel rail enable/disable sequence before attaching these
 providers to the SDE/DSI host.
+
+Both panels now reference the stock Surya supply table from 4.14
+``sdmmagpie-sde-display.dtsi``. It describes VDDIO, LAB and IBB votes
+and the 20 ms delay after turning on IBB. The panel nodes also carry
+the DSI0/PHY0 and clock names in the locations the 6.1 parser expects.
+The table does not drive hardware by itself: the future host must map
+``vddio`` to PM6150 L18 and ``lab``/``ibb`` to LCDB LDO/NCP, then validate
+the voltages and reset sequence on the actual panel.

@@ -118,3 +118,12 @@ jobs:
           for rail in ldo ncp bst; do
             test "$(fdtget -t s "$dtb" "$display_pmic/qcom,lcdb@ec00/$rail" regulator-name)" = "lcdb_$rail"
           done
+          supplies=/panel-data/panel-supply-entries
+          supply_phandle=$(fdtget -t u "$dtb" "$supplies" phandle)
+          test "$(fdtget -t u "$dtb" "$supplies/qcom,panel-supply-entry@2" qcom,supply-post-on-sleep)" = 20
+          for vendor in huaxing tianma; do
+            panel=/panel-data/qcom,mdss_dsi_nt36672c_${vendor}_fhd_video
+            test "$(fdtget -t u "$dtb" "$panel" qcom,panel-supply-entries)" = "$supply_phandle"
+            test "$(fdtget -t u "$dtb" "$panel" qcom,dsi-ctrl-num)" = 0
+            test "$(fdtget -t u "$dtb" "$panel" qcom,dsi-phy-num)" = 0
+          done

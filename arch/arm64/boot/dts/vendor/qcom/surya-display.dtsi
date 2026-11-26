@@ -5,6 +5,39 @@
 / {
 	surya_panel_data: panel-data {
 		status = "disabled";
+
+		surya_panel_supplies: panel-supply-entries {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			qcom,panel-supply-entry@0 {
+				reg = <0>;
+				qcom,supply-name = "vddio";
+				qcom,supply-min-voltage = <1800000>;
+				qcom,supply-max-voltage = <1904000>;
+				qcom,supply-enable-load = <32000>;
+				qcom,supply-disable-load = <80>;
+			};
+
+			qcom,panel-supply-entry@1 {
+				reg = <1>;
+				qcom,supply-name = "lab";
+				qcom,supply-min-voltage = <4600000>;
+				qcom,supply-max-voltage = <6000000>;
+				qcom,supply-enable-load = <100000>;
+				qcom,supply-disable-load = <100>;
+			};
+
+			qcom,panel-supply-entry@2 {
+				reg = <2>;
+				qcom,supply-name = "ibb";
+				qcom,supply-min-voltage = <4600000>;
+				qcom,supply-max-voltage = <6000000>;
+				qcom,supply-enable-load = <100000>;
+				qcom,supply-disable-load = <100>;
+				qcom,supply-post-on-sleep = <20>;
+			};
+		};
 	};
 };
 
@@ -13,11 +46,19 @@
 
 /* Stock Surya signals shared by both panel variants. */
 &dsi_nt36672c_huaxing_fhd_video {
+	qcom,panel-supply-entries = <&surya_panel_supplies>;
+	qcom,dsi-ctrl-num = <0>;
+	qcom,dsi-phy-num = <0>;
+	qcom,dsi-select-clocks = "mux_byte_clk0", "mux_pixel_clk0";
 	qcom,platform-te-gpio = <&tlmm 10 GPIO_ACTIVE_HIGH>;
 	qcom,platform-reset-gpio = <&pm6150l_gpios 9 GPIO_ACTIVE_HIGH>;
 };
 
 &dsi_nt36672c_tianma_fhd_video {
+	qcom,panel-supply-entries = <&surya_panel_supplies>;
+	qcom,dsi-ctrl-num = <0>;
+	qcom,dsi-phy-num = <0>;
+	qcom,dsi-select-clocks = "mux_byte_clk0", "mux_pixel_clk0";
 	qcom,platform-te-gpio = <&tlmm 10 GPIO_ACTIVE_HIGH>;
 	qcom,platform-reset-gpio = <&pm6150l_gpios 9 GPIO_ACTIVE_HIGH>;
 };
