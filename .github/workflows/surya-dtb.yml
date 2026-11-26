@@ -258,7 +258,17 @@ jobs:
         run: make O=out/surya ARCH=arm64 LLVM=1 gki_defconfig vendor/surya.config
       - name: Link the arm64 kernel and build Image.gz
         run: |
-          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 Image.gz
+          log="$RUNNER_TEMP/surya-kernel-build.log"
+          if ! make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 Image.gz > "$log" 2>&1; then
+            tail -n 100 "$log"
+            grep -im 12 -E 'error:|undefined (symbol|reference)|no rule to make target|killed|fatal:' "$log" \
+              | while IFS= read -r line; do
+                  line=${line//%/%25}
+                  printf '::error::%s\n' "$line"
+                done || true
+            exit 1
+          fi
+          tail -n 30 "$log"
           test -s out/surya/vmlinux
           test -s out/surya/arch/arm64/boot/Image.gz
           gzip -t out/surya/arch/arm64/boot/Image.gz
