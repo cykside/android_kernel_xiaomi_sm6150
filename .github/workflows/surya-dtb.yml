@@ -348,6 +348,8 @@ jobs:
           report="$RUNNER_TEMP/surya-module-config.tsv"
           grep -Fx CONFIG_ARM_SMMU=y out/surya/.config
           grep -Fx CONFIG_ARM_SMMU_QCOM=y out/surya/.config
+          grep -Fx CONFIG_REGULATOR_RPMH=y out/surya/.config
+          grep -Fx CONFIG_NVMEM_QCOM_QFPROM=y out/surya/.config
           awk -F= '
             FNR == NR {
               if ($1 ~ /^CONFIG_/) state[$1] = $2
