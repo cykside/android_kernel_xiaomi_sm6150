@@ -918,3 +918,17 @@ skips. Drop that unused DT clock dependency on the Surya v2 provider;
 leave the host's own clocks, both interconnect paths and RPMh votes in
 place. The snapshot does not prove which aggre1_noc dependency failed;
 record BCM voter lookup failures with the deferred-probe reason too.
+
+The owner reports that trial ``12c954015`` still did not boot and did
+not leave a recoverable log. This cannot establish whether removing
+the unused QoS clocks changed the provider's probe outcome. The last
+observable UFS blocker remains the earlier snapshot's dependency on
+``1700000.interconnect``; the PHY was unbound in that snapshot too.
+Do not repeat the same trial solely to recover a log.
+
+The FSociety SDMMagpie PHY does not request reset from the UFS host.
+The 6.1 inherited PHY reset phandle points back to the host, which
+itself consumes the PHY. Remove this reverse dependency in the Surya
+trial to match the reference. Keep the host's GCC reset and dedicated
+UFS device-reset pin states. The QMP v3 driver already allows the PHY
+reset to be absent; this does not prove why the PHY was unbound.

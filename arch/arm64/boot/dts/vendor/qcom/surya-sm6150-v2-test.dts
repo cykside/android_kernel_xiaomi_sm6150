@@ -27,3 +27,8 @@
 	/delete-property/ iommus;
 	/delete-property/ qcom,iommu-dma;
 };
+
+/* FSociety leaves the controller reset on the host, not on the PHY. */
+&ufsphy_mem {
+	/delete-property/ resets;
+};
