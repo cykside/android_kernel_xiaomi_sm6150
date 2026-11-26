@@ -830,3 +830,16 @@ rebuilds the FSociety reference. ``surya-full-ci`` enables all three.
 These are PR labels; adding a label triggers a new run and the label
 remains effective for future pushes until removed. Run full CI before
 packaging a device test. A skipped job is not evidence that it passed.
+
+First device test
+~~~~~~~~~~~~~~~~~
+
+The owner reported that the experimental TWRP installer completed,
+but the phone rebooted at the Xiaomi logo without reaching Android.
+Restoring the pre-test Boot and DTBO pair in TWRP returned the phone
+to a working FSociety system. After recovery, pstore had no entries
+and reading the tail of ``/proc/last_kmsg`` produced no output.
+The failure stage is unknown: this is not proof of an ABL rejection,
+a kernel panic, or a UFS failure. Do not repeat the same flash solely
+to recover logs. Before another device test, review the actual
+recovery repack path and establish a diagnostic capture method.
