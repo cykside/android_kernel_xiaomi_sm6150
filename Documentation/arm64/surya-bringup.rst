@@ -434,3 +434,26 @@ has priority and is unchanged for boards that use it. The state pair
 is wired only in the offline TLMM audit DTB, where UFS and TLMM both
 stay disabled. It is not wired into the primary Surya DTB until the
 SDMMagpie controller switch is validated.
+
+UFS boot selection and PLL supply
+---------------------------------
+
+The pinned 4.14 ``sdmmagpie.dtsi`` and ``sdmmagpie-idp.dtsi`` do not
+supply ``boot_conf`` or ``boot_device_type`` for UFS. The current Surya
+DTB inherits both from SM6150: ``boot_conf`` references four bytes at
+QFPROM offset ``0x6070`` (base ``0x00780000``), and the expected value
+is ``4``. The 6.1 host compares bits 5:1 of the first byte against
+that value. An absent or unreadable cell leaves the driver's current
+boot-device default unchanged; a readable mismatch skips host
+initialization. Verify this inherited mapping on target firmware
+before relying on it. Absence in the 4.14 DTS is not proof that the
+fuse or its contents differ.
+
+Stock SDMMagpie L3C allows 1.144–1.256 V and initializes at 1.144 V;
+SM6150 6.1 inherits 1.232–1.260 V with a 1.232 V initial setting.
+The common 6.1 UFS PHY votes 1.2–1.8 V for ``vdda-pll``, so its
+request intersects both ranges. This does not establish that the
+inherited voltage is suitable for Surya. Stock uses L3C for both the
+PHY PLL and the host reference clock, so check both consumers and the
+target DTB constraints before overriding the rail. Neither the fuse
+mapping nor the regulator constraints are changed by this audit.
