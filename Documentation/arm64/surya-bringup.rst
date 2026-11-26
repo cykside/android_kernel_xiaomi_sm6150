@@ -539,3 +539,10 @@ magic there. The 4.14 MMIO address is not the database address; do
 not substitute it as the 6.1 reserved-memory base. Verify the live
 node and look for existing kernel diagnostics before choosing a
 mapping. Do not read raw physical memory from userspace.
+
+The live FSociety tree confirms ``/soc/qcom,cmd-db@c3f000c`` with
+``reg = <0x0c3f000c 8>``. The filtered kernel log returned no lines.
+This confirms the discovery resource on the active device, but does
+not identify the database's actual RAM address. A 6.1 discovery path
+should validate that the firmware-reported address and length are
+fully contained in reserved memory before mapping the database.
