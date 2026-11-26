@@ -59,3 +59,8 @@ jobs:
           conn_adc=${pmic%/*}/pmic@4/adc@3100
           test "$(fdtget -t s "$dtb" "$conn_adc" status)" = disabled
           test "$(fdtget -t x "$dtb" "$conn_adc/channel@4d" reg)" = 4d
+          for table in thermal-mitigation thermal-mitigation-icl thermal-mitigation-dcp \
+                       thermal-mitigation-qc2 thermal-fcc-qc3-normal thermal-mitigation-pd-base; do
+            values=$(fdtget -t u "$dtb" "$pmic/charger" "qcom,$table")
+            awk 'NF != 16 { exit 1 } { for (i = 2; i <= NF; i++) if ($i > $(i-1)) exit 1 }' <<< "$values"
+          done

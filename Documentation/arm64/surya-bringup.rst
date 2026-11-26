@@ -107,3 +107,10 @@ ratiometric setting and 200 us settle time are preserved. Compare the
 ADC readings, especially the connector thermistor curve, against stock
 hardware before enabling charging. The DTB test checks the description,
 not the readings.
+
+The disabled SMB5 node also carries the six Surya thermal mitigation
+tables supported by the 6.1 driver, copied from 4.14
+``sdmmagpie-idp.dtsi``. The smoke test verifies that each table has 16
+non-increasing entries. Charge-pump-specific tables, battery profile,
+and fast-charge policy are not ported here. Table parity does not
+validate temperature calibration, battery limits, or charger behavior.
