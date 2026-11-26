@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/dts-v1/;
+
+#include "sm6150.dtsi"
+
+/* Bring-up stub only. Do not flash: inherited platform data is unvalidated. */
+/ {
+	model = "Xiaomi POCO X3 NFC";
+	compatible = "xiaomi,surya", "qcom,sm6150";
+
+	/* IDs from the 4.14 sdmmagpie-idp-overlay-miui.dts. */
+	qcom,msm-id = <365 0x0>;
+	qcom,board-id = <34 0>;
+};
