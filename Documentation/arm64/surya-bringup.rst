@@ -626,3 +626,13 @@ reports pair missing labels with their stock base node paths, so each
 can be classified before considering any port. Do not add placeholder
 aliases merely to make the merge succeed: a successful merge can
 silently change pin, regulator or reserved-memory properties.
+
+The annotations on run ``45808447785`` show that the missing references
+span audio (APR, SLIMbus, SoundWire, codec and MI2S), camera (CCI, CAMCC
+and sensor pin states), display (DSI PLL, secondary PHY and DP), PMIC
+and thermal nodes, and peripheral pin states (SDC, UART, SPI and
+charger). This is not a UFS-only overlay. Do not carry it over wholesale
+or create dummy labels for these subsystems. Keep the UFS integration
+fixture as a self-contained tree; before any repack, establish what ABL
+will do with the active DTBO rather than assume that supplying a base
+DTB suppresses overlay application.

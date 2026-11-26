@@ -396,7 +396,9 @@ jobs:
           fi
           missing=$(wc -l < "$work/missing-fixups.txt")
           refs=$(wc -l < "$work/fixups.txt")
-          printf '::notice title=Surya overlay baseline::MIUI 14.0.1 overlay %s; missing fixup symbols: %s/%s\n' "$overlay_result" "$missing" "$refs"
+          candidate_bytes=$(wc -c < "$candidate")
+          stock_bytes=$(wc -c < "$work/base.dtb")
+          printf '::notice title=Surya overlay baseline::MIUI 14.0.1 overlay %s; missing fixup symbols: %s/%s; base sizes: stock=%s, fixture=%s bytes\n' "$overlay_result" "$missing" "$refs" "$stock_bytes" "$candidate_bytes"
           {
             printf '### Stock overlay against the compile-only UFS DTB: %s\n\n' "$overlay_result"
             printf '\x60\x60\x60text\nMissing fixup symbols (%s):\n' "$missing"
