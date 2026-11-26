@@ -37,6 +37,13 @@ jobs:
               missing=1
             fi
           done < arch/arm64/configs/vendor/surya.config
+          # These suppliers are also selected indirectly by Kconfig.
+          for config in PM_GENERIC_DOMAINS_OF ARM_PSCI_CPUIDLE_DOMAIN QCOM_RPMH INTERCONNECT_QCOM_BCM_VOTER; do
+            if ! grep -Fxq "CONFIG_${config}=y" out/surya/.config; then
+              echo "::error::Required early RPMh supplier CONFIG_${config} did not resolve to y"
+              missing=1
+            fi
+          done
           test "$missing" -eq 0
       - name: Build and check the board DTB
         run: |
@@ -662,6 +669,9 @@ jobs:
           for config in SM_GCC_6150 QCOM_CLK_RPMH QCOM_GDSC_REGULATOR QCOM_PDC SPMI_MSM_PMIC_ARB INTERCONNECT_QCOM_SM6150 PHY_QCOM_UFS_V3 SCSI_UFS_QCOM; do
             grep -Fx "CONFIG_${config}=y" out/surya/.config
           done
+          for config in PM_GENERIC_DOMAINS_OF ARM_PSCI_CPUIDLE_DOMAIN QCOM_RPMH INTERCONNECT_QCOM_BCM_VOTER; do
+            grep -Fx "CONFIG_${config}=y" out/surya/.config
+          done
           awk -F= '
             FNR == NR {
               if ($1 ~ /^CONFIG_/) state[$1] = $2
@@ -891,6 +901,13 @@ jobs:
             exit 1
           fi
           grep -qx qcom,skip-qos <<< "$aggre_properties"
+          rsc=/soc/rsc@18200000
+          voter=$rsc/drv@2/bcm_voter
+          test "$(fdtget -t s dtb "$aggre" qcom,bcm-voter-names)" = hlos
+          test "$(fdtget -t x dtb "$aggre" qcom,bcm-voters)" = "$(fdtget -t x dtb "$voter" phandle)"
+          test "$(fdtget -t s dtb "$voter" compatible)" = qcom,bcm-voter
+          test "$(fdtget -t u dtb "$rsc/drv@2" qcom,drv-id)" = 2
+          test "$(fdtget -t x dtb "$rsc" power-domains)" = "$(fdtget -t x dtb /psci/cluster-pd phandle)"
           ramoops_properties=$(fdtget -p dtb /reserved-memory/ramoops@9d800000)
           grep -qx no-map <<< "$ramoops_properties"
           gdsc=/soc/qcom,gdsc@177004

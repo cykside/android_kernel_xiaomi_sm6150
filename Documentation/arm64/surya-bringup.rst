@@ -991,3 +991,57 @@ routes its mandatory periph_irq through the qcom,pdc interrupt domain.
 Build that provider in on Surya rather than relying on the SPMI config
 alone. This supplies the declared interrupt path; it is not evidence
 that the earlier NoC defer was caused by the PDC.
+
+The PMIC interrupt routes agree at the GIC: FSociety uses SPI 481
+directly, while the trial routes PDC pin 1 through the range
+``<0 480 94>``, which resolves to the same SPI. The 6.1 PMIC arbiter
+returns an error if it cannot acquire the named periph_irq. This is
+a required supplier, not merely a suspend/wakeup optimization.
+
+Hardware result for the combined supplier trial
+-----------------------------------------------
+
+The tester reported that ``4e96dd2bf`` did not boot, despite successful
+build, DT validation and offline boot-v2 repack in run ``45897126700``.
+No matching kernel log was supplied. This result does not establish that
+UFS still defers on the interconnect or that its probe reaches the PHY.
+Keep the last logged failure separate from this unobserved boot path.
+Do not distribute further test ZIPs based on offline validation alone.
+
+Raghav's Violet changes and Surya applicability
+-----------------------------------------------
+
+* ``7536e8f9c``: the PMIC arbiter stale-IRQ cleanup is already present
+  in the shared SPMI driver, including the valid APID and ownership
+  checks. Do not duplicate it or broaden the register walk. The failure
+  it addressed was observed after kexec from 4.14 on Violet.
+* ``9c2015eb2``: retain the Surya NoC skip-qos workaround with RPMh
+  bandwidth votes intact. Violet's apps-only voter changes addressed
+  a display RSC that read zero after kexec; its SDHCI runtime-PM change
+  does not address UFS.
+* ``10ad815b6``: adopt the handoff investigation method, not the
+  display stream ID or context bank. Violet's stream 0x800 and context
+  bank 2 were observed on Violet. Reusing a bootloader mapping on Surya
+  requires proof of the active mapping; this is not a UFS supplier fix.
+* ``d2552efbb`` removes six Violet-only TBU disable overrides; it does
+  not add a UFS IOMMU mapping. Surya already inherits those enabled
+  TBUs. The common UFS SID 0x300 is within ANOC1's 0x000--0x3ff
+  range, but this range only describes the TBU; it does not establish
+  that UFS requires translation. The Surya trial removes only the UFS
+  consumer's iommus property to match the FSociety reference. This
+  leaves the TBUs available to other clients and does not justify
+  globally disabling or bypassing the SMMU.
+
+HLOS voter registration before UFS
+----------------------------------
+
+Surya and Violet inherit the apps_rsc cluster power-domain dependency.
+In rpmh_rsc_probe(), a failure attaching that domain or registering its
+notifier returns before the DRV children are populated. Consequently,
+matching the hlos voter phandle is necessary but not enough: a missing
+PSCI cluster-genpd provider can block both the voter and the RPMh clock
+controller. ARM_PSCI_CPUIDLE_DOMAIN defaults to y when ARM_PSCI_CPUIDLE
+and PM_GENERIC_DOMAINS_OF resolve to y. Verify the resolved symbols and
+provider registration rather than dropping the power-domain reference:
+that would also change RPMh sleep/wake handling. No corresponding
+attach failure has been established for the last hardware trial.

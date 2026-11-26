@@ -167,9 +167,13 @@ static int psci_cpuidle_domain_probe(struct platform_device *pdev)
 	if (ret)
 		goto remove_pd;
 
-	/* let's try to enable OSI. */
+	/*
+	 * Platform-coordinated suspend is the default when OSI is not
+	 * advertised. Firmware may not implement SET_SUSPEND_MODE in
+	 * that case; keep the CPU domains available to their consumers.
+	 */
 	ret = psci_set_osi_mode(use_osi);
-	if (ret)
+	if (ret && (use_osi || ret != -EOPNOTSUPP))
 		goto remove_pd;
 
 	pr_info("Initialized CPU PM domain topology using %s mode\n",
