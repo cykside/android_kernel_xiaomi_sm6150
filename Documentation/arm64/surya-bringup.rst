@@ -751,3 +751,11 @@ CI now checks those two values against the live observation when the
 source merge succeeds and reports UFS register windows separately.
 This corroborates the staged Command DB configuration, not the
 firmware-reported address read at runtime.
+
+Both FSociety source-derived DTBs in run ``45818373904`` locate the
+UFS host and ICE at ``0x1d84000/0x3000`` and ``0x1d90000/0x8000``,
+matching the 6.1 fixture. The PHY base is ``0x1d87000`` in both, but
+FSociety describes ``0xddc`` bytes while 6.1 describes ``0xe00``.
+The 6.1 mapping is deliberately not shrunk to the 4.14 size: the
+6.1 driver maps the resource it is given and its register accesses
+must determine the required span. Static agreement is not a link test.

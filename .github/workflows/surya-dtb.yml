@@ -328,6 +328,12 @@ jobs:
           phy=/soc/ufsphy_mem@1d87000
           test "$(fdtget -t s "$dtb" "$host" status)" = okay
           test "$(fdtget -t s "$dtb" "$phy" status)" = okay
+          test "$(fdtget -t x "$dtb" "$host" reg)" = '1d84000 3000 1d90000 8000'
+          test "$(fdtget -t x "$dtb" "$phy" reg)" = '1d87000 e00'
+          test "$(fdtget -t u "$dtb" "$host" interrupts)" = '0 265 4'
+          for node in "$host" "$phy"; do
+            test "$(fdtget -t u "$dtb" "$node" lanes-per-direction)" = 1
+          done
           test "$(fdtget -t x "$dtb" "$host" phys)" = "$(fdtget -t x "$dtb" "$phy" phandle)"
           test "$(fdtget -t x "$dtb" "$phy" resets)" = "$(fdtget -t x "$dtb" "$host" phandle) 0"
           test "$(fdtget -t s "$dtb" "$host" pinctrl-names)" = 'dev-reset-assert dev-reset-deassert'
@@ -548,6 +554,11 @@ jobs:
               phy=/soc/ufsphy_mem@1d87000
               host_reg=$(fdtget -t x "$merged" "$host" reg)
               phy_reg=$(fdtget -t x "$merged" "$phy" reg)
+              test "$host_reg" = '1d84000 3000 1d90000 8000'
+              test "$phy_reg" = '1d87000 ddc'
+              for node in "$host" "$phy"; do
+                test "$(fdtget -t u "$merged" "$node" lanes-per-direction)" = 1
+              done
               printf '::notice title=Surya FSociety UFS reference::%s; host=%s; PHY=%s\n' "$name" "$host_reg" "$phy_reg"
               for node in "$host" "$phy"; do
                 for property in compatible clock-names reset-names pinctrl-names; do
