@@ -619,3 +619,10 @@ that UFS integration DTB and reports missing external fixup symbols.
 An applied overlay is not a compatibility pass: it can still override
 hardware properties, and the overlay from the active device has not
 been tested. The merged output is not packaged or published.
+
+With labels exported, Actions run ``45807383323`` still rejected the
+pinned overlay: 77 of its 159 external symbols were absent. Audit
+reports pair missing labels with their stock base node paths, so each
+can be classified before considering any port. Do not add placeholder
+aliases merely to make the merge succeed: a successful merge can
+silently change pin, regulator or reserved-memory properties.
