@@ -274,7 +274,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: surya-dtb-for-audit
-          path: out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+          path: |
+            out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+            out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-tlmm-audit.dtb
           if-no-files-found: error
           retention-days: 3
 
@@ -311,6 +313,12 @@ jobs:
           /usr/bin/python3 scripts/dtc/surya-reserved-memory-diff.py \
             "$work/report/stock-surya-merged.dtb" \
             out/surya-dtb-for-audit/surya-sm6150.dtb > "$work/reserved-memory-diff.txt"
+          /usr/bin/python3 scripts/dtc/surya-reserved-memory-diff.py \
+            "$work/report/stock-surya-merged.dtb" \
+            out/surya-dtb-for-audit/surya-sm6150-tlmm-audit.dtb > "$work/offline-memory-diff.txt"
+          primary_count=$(grep -c '^partial overlap:' "$work/reserved-memory-diff.txt" || true)
+          offline_count=$(grep -c '^partial overlap:' "$work/offline-memory-diff.txt" || true)
+          printf '::notice title=Surya memory layout::Partial overlaps against stock: primary=%s, offline=%s\n' "$primary_count" "$offline_count"
           {
             for tree in "$work/report/stock-surya-merged.dtb" out/surya-dtb-for-audit/surya-sm6150.dtb; do
               printf '\n%s\n' "$(basename "$tree")"
@@ -339,7 +347,7 @@ jobs:
             ' "$work/ufs-comparison.txt")
             printf '::notice title=Surya UFS providers::%s\n' "${providers//%/%25}"
           done
-          grep '^partial overlap:' "$work/reserved-memory-diff.txt" | head -n 8 | while IFS= read -r line; do
+          grep '^partial overlap:' "$work/reserved-memory-diff.txt" | head -n 7 | while IFS= read -r line; do
             printf '::notice title=Surya reserved memory::%s\n' "${line//%/%25}"
           done || true
           {
@@ -348,6 +356,8 @@ jobs:
             cat "$work/report/stock-surya-summary.txt"
             printf '\nReserved memory comparison against Linux 6.1:\n'
             cat "$work/reserved-memory-diff.txt"
+            printf '\nReserved memory comparison against the offline DTB (not bootable):\n'
+            cat "$work/offline-memory-diff.txt"
             printf '\nUFS controller and PHY comparison:\n'
             cat "$work/ufs-comparison.txt"
             printf '```\n\n<details><summary>TLMM consumers</summary>\n\n```text\n'
