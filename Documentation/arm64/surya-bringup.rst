@@ -959,3 +959,11 @@ aggre1 node used the latter base address. Match the SDMMagpie aggre1
 resource in the Surya v2 DTB only, preserving its phandle consumers,
 RPMh votes and skip-qos. This corrects a reference mismatch; mapping the
 old region alone has not been established as the cause of deferred probe.
+
+FSociety's gcc-sdmmagpie driver and the inherited gcc-sm6150 driver
+use different offsets for aggre UFS AXI, UFS AXI, ICE, UniPro and
+PHY AUX branches (including their HW_CTL variants), and the AUX
+RCG. The Surya v2 GCC compatible selects the SDMMagpie offsets for
+these clocks only. Clock IDs, GCC base, UFS MEM CLKREF and the UFS
+BCR remain unchanged. The rest of the GCC controller is not audited
+by this comparison. This does not diagnose the earlier NoC defer.

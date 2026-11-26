@@ -3450,6 +3450,36 @@ static void gcc_sm6150_fixup_sa6155(struct platform_device *pdev)
 	vdd_mx.cur_level = VDD_NUM_SA6155;
 }
 
+/* The SDMMagpie UFS branches do not share the SM6150 offsets. */
+static void gcc_sm6150_fixup_surya_ufs(void)
+{
+	static const struct {
+		struct clk_branch *clk;
+		u32 reg;
+	} branches[] = {
+		{ &gcc_aggre_ufs_phy_axi_clk, 0x82024 },
+		{ &gcc_aggre_ufs_phy_axi_hw_ctl_clk, 0x82024 },
+		{ &gcc_ufs_phy_axi_clk, 0x77038 },
+		{ &gcc_ufs_phy_axi_hw_ctl_clk, 0x77038 },
+		{ &gcc_ufs_phy_ice_core_clk, 0x77090 },
+		{ &gcc_ufs_phy_ice_core_hw_ctl_clk, 0x77090 },
+		{ &gcc_ufs_phy_phy_aux_clk, 0x77094 },
+		{ &gcc_ufs_phy_phy_aux_hw_ctl_clk, 0x77094 },
+		{ &gcc_ufs_phy_unipro_core_clk, 0x7708c },
+		{ &gcc_ufs_phy_unipro_core_hw_ctl_clk, 0x7708c },
+	};
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(branches); i++) {
+		struct clk_branch *clk = branches[i].clk;
+
+		clk->halt_reg = branches[i].reg;
+		clk->hwcg_reg = branches[i].reg;
+		clk->clkr.enable_reg = branches[i].reg;
+	}
+	gcc_ufs_phy_phy_aux_clk_src.cmd_rcgr = 0x77098;
+}
+
 static int gcc_sm6150_probe(struct platform_device *pdev)
 {
 	struct regmap *regmap;
@@ -3483,6 +3513,8 @@ static int gcc_sm6150_probe(struct platform_device *pdev)
 						"qcom,sa6155-gcc");
 	if (is_sa6155)
 		gcc_sm6150_fixup_sa6155(pdev);
+	else if (of_device_is_compatible(pdev->dev.of_node, "xiaomi,surya-gcc"))
+		gcc_sm6150_fixup_surya_ufs();
 
 	regmap = qcom_cc_map(pdev, &gcc_sm6150_desc);
 	if (IS_ERR(regmap)) {

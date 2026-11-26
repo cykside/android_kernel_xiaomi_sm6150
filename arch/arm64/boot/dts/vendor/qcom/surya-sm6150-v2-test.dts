@@ -40,3 +40,8 @@
 &{/reserved-memory/ramoops@9d800000} {
 	no-map;
 };
+
+/* Select the SDMMagpie UFS clock offsets without changing the clock IDs. */
+&gcc {
+	compatible = "xiaomi,surya-gcc", "qcom,sm6150-gcc", "syscon";
+};
