@@ -17,3 +17,9 @@
 &system_noc { qcom,skip-qos; };
 &aggre1_noc { qcom,skip-qos; };
 &mmss_noc { qcom,skip-qos; };
+
+/* The FSociety SDMMagpie base and Surya overlay use UFS without an IOMMU specifier. */
+&ufshc_mem {
+	/delete-property/ iommus;
+	/delete-property/ qcom,iommu-dma;
+};

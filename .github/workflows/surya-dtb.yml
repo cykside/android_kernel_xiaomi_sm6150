@@ -875,6 +875,11 @@ jobs:
           fdtoverlay -i "$bundle/surya-base.dtb" -o dtb "$bundle/surya-ufs.dtbo"
           test "$(fdtget -t s dtb /soc/ufshc@1d84000 status)" = okay
           test "$(fdtget -t s dtb /soc/ufsphy_mem@1d87000 status)" = okay
+          ufs_properties=$(fdtget -p dtb /soc/ufshc@1d84000)
+          if grep -xE 'iommus|qcom,iommu-dma' <<< "$ufs_properties"; then
+            echo '::error::Surya UFS must not inherit the SM6150 SMMU dependency'
+            exit 1
+          fi
           sha256sum Image.gz dtb dtbo.img > SURYA-SHA256SUMS
           sh -n anykernel.sh
           zip -q -r "$RUNNER_TEMP/Surya-6.1-TWRP-BOOT-TEST-RAMOOPS.zip" META-INF tools LICENSE anykernel.sh Image.gz dtb dtbo.img SURYA-SHA256SUMS

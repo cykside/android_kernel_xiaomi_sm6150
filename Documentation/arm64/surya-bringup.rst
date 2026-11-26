@@ -900,3 +900,12 @@ the absence of UFS messages proves why storage was not discovered.
 As a controlled next trial, merge the existing UFS enable overlay into
 the DTB embedded by the flashable package, so UFS status does not depend
 on ABL applying the external DTBO. Keep the matching DTBO alongside it.
+
+The FSociety SDMMagpie UFS node and the matching MIUI overlay do not
+specify an IOMMU, whereas the 6.1 trial inherits an apps_smmu stream
+(0x300) and fastmap from sm6150.dtsi. The captured trial reports failed
+QSMMUV500 TBU probes before the Android storage timeout. Match the
+FSociety DT dependency graph for this one host by dropping the inherited
+IOMMU and fastmap properties from the Surya v2 trial. Other SMMU users,
+DMA coherency and UFS clock/power settings are unchanged. Whether the
+native firmware allows this DMA path still needs hardware validation.
