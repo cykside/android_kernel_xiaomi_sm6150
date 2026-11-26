@@ -801,3 +801,11 @@ OF tree. A marker present only in the live tree demonstrates a
 post-base addition, not necessarily application of the entire active
 DTBO. A marker already present in the base is not discriminatory.
 Do not change the DTBO partition to run this comparison.
+
+On the test device, both markers were absent from the extracted
+FSociety boot DTB and present in ``/proc/device-tree``. The live tree
+therefore includes content absent from that base dump, consistent
+with the FSociety overlay. This does not establish which boot stage
+added the nodes, which payload supplied them, or whether broken fixups
+were ignored. Treat unchanged-DTBO boot of a replacement 6.1 base
+as unvalidated; a successful offline repack is not a flash gate.
