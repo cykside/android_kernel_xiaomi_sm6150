@@ -675,3 +675,12 @@ supplies. This is consistent with libfdt rejecting an overlay fixup
 before applying fragments. Inspect the actual fragment children before
 classifying these references as stale; do not repair them by aliasing
 nodes in the 6.1 base or by modifying the active DTBO partition.
+
+A direct DTS decompile disambiguated the display node names. The
+unsuffixed ``qcom,dsi-display`` node contains only
+``qcom,dsi-display-list``; ``qcom,dsi-display@0`` contains only
+``qcom,dsi-panel``. The 18 fixups reference properties absent even
+from the exact unsuffixed node. Prefer-exact lookup cannot fix them.
+Any experiment that removes stale fixups should be limited to a local
+copy and must not be treated as a deployable DTBO. The separate 6.1
+missing-symbol issue and the active ABL overlay policy remain open.
