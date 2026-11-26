@@ -366,6 +366,50 @@ void deferred_probe_extend_timeout(void)
 	}
 }
 
+/* Surya first-stage init can exit before the normal deferred-probe timeout. */
+static bool surya_ufs_device(const struct device *dev)
+{
+	return dev->of_node &&
+	       (of_node_name_eq(dev->of_node, "ufshc") ||
+		of_node_name_eq(dev->of_node, "ufsphy_mem"));
+}
+
+static int surya_ufs_binding_show(struct device *dev, void *unused)
+{
+	if (surya_ufs_device(dev))
+		dev_notice(dev, "Surya storage snapshot: driver %s\n",
+			   READ_ONCE(dev->driver) ? "assigned" : "unbound");
+	return 0;
+}
+
+static void surya_ufs_snapshot(struct work_struct *work)
+{
+	static const char * const paths[] = {
+		"/soc/ufshc@1d84000", "/soc/ufsphy_mem@1d87000",
+	};
+	struct device_private *p;
+	struct device_node *np;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(paths); i++) {
+		np = of_find_node_by_path(paths[i]);
+		pr_notice("Surya storage snapshot: %s %s\n", paths[i],
+			  !np ? "missing" : of_device_is_available(np) ?
+			  "enabled" : "disabled");
+		of_node_put(np);
+	}
+
+	mutex_lock(&deferred_probe_mutex);
+	list_for_each_entry(p, &deferred_probe_pending_list, deferred_probe) {
+		if (surya_ufs_device(p->device))
+			dev_notice(p->device, "Surya storage snapshot: deferred: %s\n",
+				   p->deferred_probe_reason ?: "reason unavailable");
+	}
+	mutex_unlock(&deferred_probe_mutex);
+	bus_for_each_dev(&platform_bus_type, NULL, NULL, surya_ufs_binding_show);
+}
+static DECLARE_DELAYED_WORK(surya_ufs_snapshot_work, surya_ufs_snapshot);
+
 /**
  * deferred_probe_initcall() - Enable probing of deferred devices
  *
@@ -375,6 +419,9 @@ void deferred_probe_extend_timeout(void)
  */
 static int deferred_probe_initcall(void)
 {
+	if (of_machine_is_compatible("xiaomi,surya"))
+		schedule_delayed_work(&surya_ufs_snapshot_work, 4 * HZ);
+
 	debugfs_create_file("devices_deferred", 0444, NULL, NULL,
 			    &deferred_devs_fops);
 
