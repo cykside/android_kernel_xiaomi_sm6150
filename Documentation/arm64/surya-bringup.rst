@@ -462,3 +462,36 @@ VCC L19 2.944–3.304 V vs. 2.700–3.008 V; VCCQ2 L12
 1.696–1.952 V vs. 1.800–1.950 V; PHY L4 0.824–0.920 V vs.
 0.875–0.975 V. L3C matches the source comparison above. These results are for the offline dump, not the target
 firmware's live tree. UFS remains disabled.
+
+Active Android 12 boot image sample
+-----------------------------------
+
+Read-only header samples supplied from a running Surya with
+``4.14.357-FSociety/8d46546a`` and KernelSU show Android boot header v2
+(``1660`` bytes), 4096-byte pages, and gzip magic at kernel offset
+``0x1000``. The header declares a kernel payload of ``0xd2bdf8`` bytes,
+a ramdisk of ``0xc1915`` bytes at ``0xd2d000``, no second stage or
+embedded recovery DTBO, and a separate DTB section of ``0x5475c``
+bytes at calculated file offset ``0xdef000``. The DTB load address
+in the header is ``0x01f00000``, not a file offset. A read at ``0xdef000`` confirmed FDT magic ``0xd00dfeed`` and
+``totalsize = 0x5475c``, which fills the declared DTB section with one
+FDT. DTBO selection remains unverified. The gzip prefix alone
+cannot rule out additional data after the compressed stream.
+
+This sample is from a working custom kernel, not a pristine MIUI boot
+image. Its header is a repack reference, not proof of Android 12 vendor
+compatibility with 6.1 or of KernelSU support in the new kernel.
+
+The active ``dtbo`` partition starts with the Android DT table magic
+``0xd7b7ab1e``. The table is version 0 and declares total size
+``0x3f0ba``, 4096-byte pages, a 32-byte header and one 32-byte entry
+at offset ``0x20``. This establishes that the partition contains one
+entry, not that the bootloader applies it to the base FDT.
+The entry declares payload size ``0x3f07a`` at offset ``0x40``; it
+ends exactly at the declared table size. The entry ID, revision and
+four custom words are zero. Those metadata fields do not establish
+which board modifications the payload makes or whether it was applied.
+The payload at ``0x40`` has FDT magic ``0xd00dfeed`` and an internal
+size of ``0x3f07a``, matching the table entry. This checks the FDT
+header only; structural validation and overlay application against the
+6.1 base still require the payload itself.
