@@ -666,3 +666,12 @@ explain the control failure. Inspect the active overlay's fragment
 structure and fixups before drawing conclusions about ABL. The
 working boot image alone does not prove that ABL applies this payload
 with the same rules as libfdt, or that it applies it at all.
+
+On-device inspection found all 158 base symbol paths readable, but
+18 external fixup references could not resolve a node or property in
+the overlay itself. All point to ``/fragment@24/__overlay__/qcom,dsi-display``
+and cover reset/TE GPIOs, DSI PHY/controller, clocks, pinctrl, and
+supplies. This is consistent with libfdt rejecting an overlay fixup
+before applying fragments. Inspect the actual fragment children before
+classifying these references as stale; do not repair them by aliasing
+nodes in the 6.1 base or by modifying the active DTBO partition.
