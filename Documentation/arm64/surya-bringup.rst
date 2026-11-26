@@ -132,3 +132,12 @@ charge completion. The smoke test checks the provider references in both
 directions. Before enabling the nodes, verify that both drivers bind
 without a persistent probe dependency and that the reported charger
 state matches stock.
+
+Driver compile checks
+---------------------
+
+A DTB build does not compile kernel drivers. The CI smoke test also
+compiles the selected SMB5, QGauge, USB-PD, DWC3, ADC5 and UFS code using
+the resolved Surya configuration. This is an object-level check, not a
+full kernel link or an on-device probe test. The workflow does not
+produce a flashable artifact.

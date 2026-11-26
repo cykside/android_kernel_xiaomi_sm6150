@@ -16,7 +16,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm lld flex bison device-tree-compiler
+          sudo apt-get install -y clang llvm lld flex bison bc libelf-dev libssl-dev device-tree-compiler
       - name: Configure Surya and verify the fragment
         run: |
           make O=out/surya ARCH=arm64 LLVM=1 gki_defconfig vendor/surya.config
@@ -81,3 +81,12 @@ jobs:
             NF != 46 { exit 1 }
             { for (i = 15; i <= NF; i += 2) if ($i != provider) exit 1 }
           ' <<< "$charger_inputs"
+      - name: Compile the staged power, USB and UFS drivers
+        run: |
+          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 \
+            drivers/power/supply/qcom/built-in.a \
+            drivers/usb/pd/built-in.a \
+            drivers/usb/dwc3/dwc3-msm-core.o \
+            drivers/iio/adc/qcom-spmi-adc5.o \
+            drivers/ufs/host/ufs-qcom.o \
+            drivers/phy/qualcomm/phy-qcom-ufs-qmp-v3.o
