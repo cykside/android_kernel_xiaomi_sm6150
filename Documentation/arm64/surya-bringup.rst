@@ -712,3 +712,13 @@ DTS additionally enables ``qupv3_se11_spi`` with a
 ``dtbo-miui.img`` into its AnyKernel3 packaging directory. This shows
 that the build produces two overlay variants; it does not identify
 which was installed or make either applicable to the 6.1 base.
+
+The pinned FSociety ``sdmmagpie-sde-display.dtsi`` defines the
+unsuffixed ``sde_dsi`` node with the exact GPIO, controller, PHY,
+clock, pinctrl and supply properties missing from the active overlay.
+Both overlay variants include this source through ``sdmmagpie-idp.dtsi``.
+This is a source-to-artifact difference, not evidence that those
+properties were absent from the pinned DTS. The 4.14 boot Makefile
+uses separate table-packing targets (``dtbo.img`` passes an explicit
+4096-byte page size, ``dtbo-miui.img`` uses the packer's default).
+Neither rule identifies which payload is installed on the device.
