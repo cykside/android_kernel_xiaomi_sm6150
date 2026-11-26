@@ -47,6 +47,27 @@ def inspect(path):
         }
 
 
+def avb_footer(path):
+    """Inspect the terminal AVB footer, not chained vbmeta or signatures."""
+    with path.open('rb') as image:
+        length = image.seek(0, 2)
+        if length < 64:
+            return None
+        image.seek(-64, 2)
+        footer = image.read(64)
+    if footer[:4] != b'AVBf':
+        return None
+    major, minor, original, offset, size = struct.unpack_from('>IIQQQ', footer, 4)
+    if original > offset or size < 4 or offset + size > length - 64:
+        raise ValueError('AVB footer points outside the image or into the payload')
+    with path.open('rb') as image:
+        image.seek(offset)
+        if image.read(4) != b'AVB0':
+            raise ValueError('AVB footer does not point to vbmeta magic')
+    return {'footer_version_major': major, 'footer_version_minor': minor,
+            'original_image_size': original, 'vbmeta_offset': offset, 'vbmeta_size': size}
+
+
 def replacement_plan(original, kernel, dtb):
     with kernel.open('rb') as image:
         if image.read(3) != b'\x1f\x8b\x08':
@@ -70,6 +91,7 @@ def main():
     parser.add_argument('image', type=Path)
     parser.add_argument('--plan', nargs=2, type=Path, metavar=('IMAGE_GZ', 'DTB'),
                         help='calculate replacement offsets without writing an image')
+    parser.add_argument('--avb', action='store_true', help='report a terminal AVB footer, if present')
     parser.add_argument('--capacity', type=lambda value: int(value, 0), metavar='BYTES',
                         help='measured boot partition capacity, for a dry run only')
     args = parser.parse_args()
@@ -87,6 +109,14 @@ def main():
             print('Dry run only: excludes AVB/footer and does not check DTBO compatibility.')
         for key, value in layout.items():
             print(f'{key}: {value:#x}')
+        if args.avb:
+            footer = avb_footer(args.image)
+            if footer is None:
+                print('No terminal AVB footer found; external vbmeta may still verify boot.')
+            else:
+                print('Reference image AVB footer (not signature validation):')
+                for field, value in footer.items():
+                    print(f'{field}: {value:#x}')
     except (OSError, ValueError, struct.error) as error:
         parser.exit(1, f'{error}\n')
 

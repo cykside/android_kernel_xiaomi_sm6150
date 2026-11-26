@@ -771,3 +771,10 @@ The test device's boot block device reports ``134217728`` bytes
 (128 MiB) via ``blockdev --getsize64``. CI compares the aligned v2
 payload with this measured capacity. The remaining space is reported
 before AVB; it is not a validated final image size or boot permission.
+
+Run ``45822625503`` measured the aligned 6.1 payload at ``17084416``
+bytes, leaving ``117133312`` bytes before AVB against the measured
+capacity. The read-only boot tool also accepts ``--avb`` to inspect an
+existing image's terminal footer and its vbmeta location. A missing
+footer does not rule out external vbmeta verification, and this check
+does not verify signatures or change verified boot settings.
