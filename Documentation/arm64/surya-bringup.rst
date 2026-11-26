@@ -872,3 +872,12 @@ asynchronous, the exact offending pad or transaction is not proven.
 The follow-up skips only the registration-time GPIO direction sweep
 on SDMMagpie. Explicit direction queries still use the driver callback.
 This is not yet verified on hardware and does not establish UFS status.
+
+The recovered FSociety boot registered ramoops at 0x9d800000 (4 MiB,
+16-byte ECC). Its boot reason was recovery and its PMIC reported a hard
+reset/cold boot; those observations do not identify the failed 6.1 reset.
+On the 6.1 PSCI restart path, reboot=warm selects SYSTEM_RESET2 only if
+firmware reported support. Otherwise Linux requests SYSTEM_RESET. A
+watchdog/firmware reset can bypass that path entirely. Log the probed
+SYSTEM_RESET2 capability at notice level in the next trial; a positive
+result is not proof that RAM survived the specific failed boot.
