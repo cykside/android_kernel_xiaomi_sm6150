@@ -736,3 +736,11 @@ reproduces the rejection at the outcome level; it does not establish
 that the rebuilt and installed overlays fail for the same reason.
 The reference job reports the libfdt error and checks the decompiled
 exact display node without relying on unit-address path matching.
+
+Run ``45817414555`` isolated a host tool lookup issue in the rebuilt
+source overlays: both fail with the unmodified control and both apply
+with the same-version exact-name-first diagnostic. The active DTBO
+still lacks the properties referenced by its 18 stale fixups; this
+experiment does not fix that artifact or make the 6.1 base compatible.
+Use the diagnostic merged source trees to cross-check register and
+reservation data, not as boot images or substitutes for the live tree.

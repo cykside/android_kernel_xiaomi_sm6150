@@ -522,7 +522,7 @@ jobs:
               result=rejected
             fi
             for tool in fdtoverlay-exact-control fdtoverlay-exact; do
-              if "$work/$tool" -i "$work/sdmmagpie.dtb" -o "$work/diagnostic-merged.dtb" "$work/$name.dtb" >> "$work/report" 2>&1; then
+              if "$work/$tool" -i "$work/sdmmagpie.dtb" -o "$work/$name-$tool.dtb" "$work/$name.dtb" >> "$work/report" 2>&1; then
                 outcome=applied
               else
                 outcome=rejected
@@ -530,6 +530,20 @@ jobs:
               printf '%s: %s\n' "$tool" "$outcome" >> "$work/report"
               if [ "$tool" = fdtoverlay-exact ]; then exact=$outcome; else control=$outcome; fi
             done
+            if [ "$exact" = applied ]; then
+              merged="$work/$name-fdtoverlay-exact.dtb"
+              for node in /reserved-memory/xbl_aop_mem@85e00000 \
+                          /reserved-memory/cdsp_regions@93900000 \
+                          /reserved-memory/pil_adsp_region@95700000 \
+                          /reserved-memory/cont_splash_region@9c000000 \
+                          /soc/qcom,cmd-db@c3f000c /soc/ufshc@1d84000; do
+                reg=$(fdtget -t x "$merged" "$node" reg 2>/dev/null || echo absent)
+                printf '%s reg: %s\n' "$node" "$reg" >> "$work/report"
+              done
+              xbl=$(fdtget -t x "$merged" /reserved-memory/xbl_aop_mem@85e00000 reg)
+              cmd=$(fdtget -t x "$merged" /soc/qcom,cmd-db@c3f000c reg)
+              printf '::notice title=Surya FSociety merged layout::%s; XBL/AOP=%s; Command DB registers=%s\n' "$name" "$xbl" "$cmd"
+            fi
             first=$(head -n 1 "$work/report")
             error=$(grep -m 1 'FDT_ERR_' "$work/report" || true)
             dtc -q -I dtb -O dts "$work/$name.dtb" > "$work/display.dts"
