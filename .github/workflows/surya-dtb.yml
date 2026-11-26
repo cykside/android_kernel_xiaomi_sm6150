@@ -290,7 +290,16 @@ jobs:
           /usr/bin/python3 scripts/dtc/surya-ufs-providers.py \
             "$work/report/stock-surya-merged.dtb" \
             out/surya-dtb-for-audit/surya-sm6150.dtb >> "$work/ufs-comparison.txt"
-          grep '^partial overlap:' "$work/reserved-memory-diff.txt" | head -n 20 | while IFS= read -r line; do
+          # Emit two compact notices before the reserved-memory notices.
+          # The full comparison stays in the summary and artifact.
+          for tree in stock-surya-merged.dtb surya-sm6150.dtb; do
+            providers=$(awk -v tree="$tree" '
+              /resolved UFS providers/ {show = index($0, tree ":") == 1}
+              show && NF {sub(/^ +/, ""); printf "%s; ", $0}
+            ' "$work/ufs-comparison.txt")
+            printf '::notice title=Surya UFS providers::%s\n' "${providers//%/%25}"
+          done
+          grep '^partial overlap:' "$work/reserved-memory-diff.txt" | head -n 8 | while IFS= read -r line; do
             printf '::notice title=Surya reserved memory::%s\n' "${line//%/%25}"
           done || true
           {
@@ -305,13 +314,6 @@ jobs:
             cat "$work/tlmm-users.tsv"
             printf '```\n\n</details>\n'
           } >> "$GITHUB_STEP_SUMMARY"
-          # Keep key findings readable through the check-runs API even
-          # when the Actions log and artifact download hosts are unreachable.
-          providers=$(sed -n '/resolved UFS providers/,$p' "$work/ufs-comparison.txt")
-          providers=${providers//%/%25}
-          providers=${providers//$'\r'/%0D}
-          providers=${providers//$'\n'/%0A}
-          printf '::notice title=Surya UFS providers::%s\n' "$providers"
           cp "$work/ufs-comparison.txt" "$RUNNER_TEMP/surya-ufs-comparison.txt"
       - uses: actions/upload-artifact@v4
         with:
