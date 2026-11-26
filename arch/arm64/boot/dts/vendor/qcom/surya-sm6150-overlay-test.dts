@@ -9,5 +9,12 @@
 };
 
 &soc {
-	xiaomi,surya-overlay-test;
+	/* Wiring and supplies are defined by the matching 6.1 base. */
+	ufshc@1d84000 {
+		status = "okay";
+	};
+
+	ufsphy_mem@1d87000 {
+		status = "okay";
+	};
 };

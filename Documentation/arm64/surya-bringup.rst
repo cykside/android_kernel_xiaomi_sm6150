@@ -810,15 +810,14 @@ added the nodes, which payload supplied them, or whether broken fixups
 were ignored. Treat unchanged-DTBO boot of a replacement 6.1 base
 as unvalidated; a successful offline repack is not a flash gate.
 
-An offline marker overlay (``surya-sm6150-overlay-test.dts``) exercises
-an alternative pairing: the 6.1 fixture supplies its staged hardware
-configuration directly, and the matching overlay adds only a marker
-under ``/soc`` using one exported ``soc`` symbol. The separate
-``surya-sm6150-v2-test.dts`` provides the symbol and phandle explicitly
-without ``-@``, following Violet's local DTB convention. This avoids
-reliance on other 4.14 external labels in the experiment. It is not proof that ABL
-selects or accepts this pair, does not port all active overlay content,
-and is not built into a partition image or published for installation.
+The offline ``surya-sm6150-overlay-test.dts`` enables the UFS host
+and PHY on its matching ``surya-sm6150-v2-test.dts`` base. The base
+contains the 6.1 wiring and supplies, but leaves both nodes disabled
+until the overlay is applied. Only the ``soc`` external symbol is
+required, following Violet's local convention. The fast DTB job tests
+this transition and checks the retained PHY and reset-state references.
+The pair is not a drop-in replacement for the active DTBO: it does not
+validate ABL selection, runtime access to UFS, or other board features.
 
 Fast iteration CI
 ~~~~~~~~~~~~~~~~~

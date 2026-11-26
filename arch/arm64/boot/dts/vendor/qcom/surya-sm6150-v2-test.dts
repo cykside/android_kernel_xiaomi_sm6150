@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Offline fixture only: exercise the same single-symbol scheme as Violet. */
-#include "surya-sm6150-ufs-test.dts"
+#include "surya-sm6150-cmd-db-test.dts"
 
 / {
 	/* Give the target a phandle without exporting every label with -@. */

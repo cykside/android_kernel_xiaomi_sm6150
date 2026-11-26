@@ -356,6 +356,26 @@ jobs:
           test "$(fdtget -t s "$dtb" /__symbols__ soc)" = /soc
           test "$(fdtget -t x "$dtb" / xiaomi,surya-overlay-target)" = "$(fdtget -t x "$dtb" /soc phandle)"
 
+      - name: Test a native Surya overlay offline (no partition image)
+        run: |
+          work=$(mktemp -d)
+          trap 'rm -rf -- "$work"' EXIT
+          base=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-v2-test.dtb
+          dtc -@ -I dts -O dtb -o "$work/ufs.dtbo" \
+            arch/arm64/boot/dts/vendor/qcom/surya-sm6150-overlay-test.dts
+          test "$(fdtget -t u "$work/ufs.dtbo" / qcom,msm-id)" = '365 0'
+          test "$(fdtget -t u "$work/ufs.dtbo" / qcom,board-id)" = '34 0'
+          for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000; do
+            test "$(fdtget -t s "$base" "$node" status)" = disabled
+          done
+          fdtoverlay -i "$base" -o "$work/merged.dtb" "$work/ufs.dtbo"
+          test "$(fdtget -p "$work/ufs.dtbo" /__fixups__)" = soc
+          for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000 /soc/pinctrl@3400000; do
+            test "$(fdtget -t s "$work/merged.dtb" "$node" status)" = okay
+          done
+          test "$(fdtget -t x "$work/merged.dtb" /soc/ufshc@1d84000 phys)" = "$(fdtget -t x "$work/merged.dtb" /soc/ufsphy_mem@1d87000 phandle)"
+          test "$(fdtget -t s "$work/merged.dtb" /soc/ufshc@1d84000 pinctrl-names)" = 'dev-reset-assert dev-reset-deassert'
+
       - uses: actions/upload-artifact@v4
         with:
           name: surya-dtb-for-audit
@@ -384,21 +404,6 @@ jobs:
           sudo apt-get install -y device-tree-compiler python3-libfdt
       - name: Test offline overlay success and rejection
         run: sh scripts/dtc/test-surya-overlay-check.sh
-      - name: Test a native Surya overlay offline (no partition image)
-        run: |
-          work=$(mktemp -d)
-          trap 'rm -rf -- "$work"' EXIT
-          base=out/surya-dtb-for-audit/surya-sm6150-v2-test.dtb
-          dtc -@ -I dts -O dtb -o "$work/marker.dtbo" \
-            arch/arm64/boot/dts/vendor/qcom/surya-sm6150-overlay-test.dts
-          test "$(fdtget -t u "$work/marker.dtbo" / qcom,msm-id)" = '365 0'
-          test "$(fdtget -t u "$work/marker.dtbo" / qcom,board-id)" = '34 0'
-          fdtoverlay -i "$base" -o "$work/merged.dtb" "$work/marker.dtbo"
-          test "$(fdtget -p "$work/marker.dtbo" /__fixups__)" = soc
-          fdtget -p "$work/merged.dtb" /soc | grep -Fx xiaomi,surya-overlay-test
-          for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000 /soc/pinctrl@3400000; do
-            test "$(fdtget -t s "$work/merged.dtb" "$node" status)" = okay
-          done
       - name: Test UFS provider resolution
         run: PYTHON=/usr/bin/python3 sh scripts/dtc/test-surya-ufs-providers.sh
       - name: Compare against the pinned MIUI 14.0.1 stock dump
@@ -758,33 +763,33 @@ jobs:
           mkdir -p "$bundle"
           cp "$boot/Image.gz" "$bundle/Image.gz"
           cp "$boot/dts/vendor/qcom/surya-sm6150-v2-test.dtb" "$bundle/surya-base.dtb"
-          dtc -@ -I dts -O dtb -o "$bundle/surya-marker.dtbo" \
+          dtc -@ -I dts -O dtb -o "$bundle/surya-ufs.dtbo" \
             arch/arm64/boot/dts/vendor/qcom/surya-sm6150-overlay-test.dts
           test "$(fdtget -p "$bundle/surya-base.dtb" /__symbols__)" = soc
-          test "$(fdtget -p "$bundle/surya-marker.dtbo" /__fixups__)" = soc
-          sh scripts/dtc/surya-overlay-check.sh "$bundle/surya-base.dtb" "$bundle/surya-marker.dtbo"
+          test "$(fdtget -p "$bundle/surya-ufs.dtbo" /__fixups__)" = soc
+          sh scripts/dtc/surya-overlay-check.sh "$bundle/surya-base.dtb" "$bundle/surya-ufs.dtbo"
           python3 - "$bundle" <<'PYTHON'
           import struct
           import sys
           from pathlib import Path
 
           bundle = Path(sys.argv[1])
-          overlay = (bundle / 'surya-marker.dtbo').read_bytes()
+          overlay = (bundle / 'surya-ufs.dtbo').read_bytes()
           # Match the observed Android v0 table envelope. This does not
           # imply equivalent overlay content or bootloader acceptance.
           table = struct.pack('>8I', 0xd7b7ab1e, 64 + len(overlay), 32, 32, 1, 32, 4096, 0)
           entry = struct.pack('>8I', len(overlay), 64, 0, 0, 0, 0, 0, 0)
-          (bundle / 'surya-marker.dtbo-table.test').write_bytes(table + entry + overlay)
+          (bundle / 'surya-ufs.dtbo-table.test').write_bytes(table + entry + overlay)
           PYTHON
           cat > "$bundle/README.txt" <<'EOF'
           POCO X3 NFC (surya), Linux 6.1, offline test components only.
           This archive is NOT an AnyKernel3 installer and contains no flashable boot image. The .test DTBO table is for offline format inspection only.
-          Image.gz is the kernel payload; surya-base.dtb and surya-marker.dtbo are the matching experimental pair.
-          The marker overlay does not replace the active device overlay for installation purposes.
+          Image.gz is the kernel payload; surya-base.dtb and surya-ufs.dtbo are the matching experimental pair.
+          The experimental overlay enables UFS on its matching base only; it is not a drop-in replacement for the active DTBO.
           Bootloader acceptance, AVB and UFS operation on hardware have not been validated.
           Do not install this archive in TWRP or write these files to a partition.
           EOF
-          (cd "$bundle" && sha256sum Image.gz surya-base.dtb surya-marker.dtbo surya-marker.dtbo-table.test > SHA256SUMS)
+          (cd "$bundle" && sha256sum Image.gz surya-base.dtb surya-ufs.dtbo surya-ufs.dtbo-table.test > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: surya-v2-pair-OFFLINE-NOT-FOR-FLASH
