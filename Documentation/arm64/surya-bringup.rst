@@ -909,3 +909,12 @@ FSociety DT dependency graph for this one host by dropping the inherited
 IOMMU and fastmap properties from the Surya v2 trial. Other SMMU users,
 DMA coherency and UFS clock/power settings are unchanged. Whether the
 native firmware allows this DMA path still needs hardware validation.
+
+The next device snapshot confirms both UFS DT nodes are enabled and
+identifies the host's pending supplier as 1700000.interconnect
+(aggre1_noc), not the inherited UFS IOMMU. Its three provider bulk
+clocks are only used by static QoS setup, which this trial already
+skips. Drop that unused DT clock dependency on the Surya v2 provider;
+leave the host's own clocks, both interconnect paths and RPMh votes in
+place. The snapshot does not prove which aggre1_noc dependency failed;
+record BCM voter lookup failures with the deferred-probe reason too.

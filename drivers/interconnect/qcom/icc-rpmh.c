@@ -482,7 +482,9 @@ int qcom_icc_rpmh_probe(struct platform_device *pdev)
 			if (desc->voters[i] && !is_voter_disabled(desc->voters[i])) {
 				qp->voters[i] = of_bcm_voter_get(qp->dev, desc->voters[i]);
 				if (IS_ERR(qp->voters[i]))
-					return PTR_ERR(qp->voters[i]);
+					return dev_err_probe(dev, PTR_ERR(qp->voters[i]),
+							     "BCM voter %s unavailable\n",
+							     desc->voters[i]);
 			}
 		}
 	}

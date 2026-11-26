@@ -15,7 +15,11 @@
 &gem_noc { qcom,skip-qos; };
 &config_noc { qcom,skip-qos; };
 &system_noc { qcom,skip-qos; };
-&aggre1_noc { qcom,skip-qos; };
+&aggre1_noc {
+	qcom,skip-qos;
+	/* These bulk clocks serve QoS setup only; UFS keeps its own clocks. */
+	/delete-property/ clocks;
+};
 &mmss_noc { qcom,skip-qos; };
 
 /* The FSociety SDMMagpie base and Surya overlay use UFS without an IOMMU specifier. */
