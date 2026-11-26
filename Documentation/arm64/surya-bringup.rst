@@ -495,3 +495,11 @@ The payload at ``0x40`` has FDT magic ``0xd00dfeed`` and an internal
 size of ``0x3f07a``, matching the table entry. This checks the FDT
 header only; structural validation and overlay application against the
 6.1 base still require the payload itself.
+
+The running kernel exposes model ``IDP`` and root compatibles
+``qcom,sdmmagpie-idp``, ``qcom,sdmmagpie``, ``qcom,idp`` in that order.
+Live ``qcom,msm-id`` and ``qcom,board-id`` decode as ``<365 0>`` and
+``<34 0>`` respectively, matching the numeric IDs in the staged Surya
+DTS. The compatible strings differ. This confirms live board identity,
+not how the live tree was assembled or that the active overlay applies
+to the 6.1 base.
