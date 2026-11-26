@@ -89,7 +89,9 @@ jobs:
             drivers/usb/dwc3/dwc3-msm-core.o \
             drivers/iio/adc/qcom-spmi-adc5.o \
             drivers/ufs/host/ufs-qcom.o \
-            drivers/phy/qualcomm/phy-qcom-ufs-qmp-v3.o
+            drivers/phy/qualcomm/phy-qcom-ufs-qmp-v3.o \
+            drivers/regulator/qpnp-lcdb-regulator.o \
+            drivers/video/backlight/qcom-spmi-wled.o
       - name: Verify staged NT36672C panel data
         run: |
           dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
@@ -108,4 +110,11 @@ jobs:
             test "$(fdtget -t u "$dtb" "$timing" qcom,mdss-dsi-panel-height)" = 2400
             test "$(fdtget -t u "$dtb" "$timing" qcom,mdss-dsi-panel-framerate)" = 120
             test -n "$(fdtget -t bx "$dtb" "$timing" qcom,mdss-dsi-on-command)"
+          done
+          display_pmic=/soc/qcom,spmi@c440000/pmic@5
+          test "$(fdtget -t s "$dtb" "$display_pmic/qcom,wled@d800" status)" = disabled
+          test "$(fdtget -t u "$dtb" "$display_pmic/qcom,wled@d800" qcom,string-cfg)" = 7
+          test "$(fdtget -t s "$dtb" "$display_pmic/qcom,lcdb@ec00" status)" = disabled
+          for rail in ldo ncp bst; do
+            test "$(fdtget -t s "$dtb" "$display_pmic/qcom,lcdb@ec00/$rail" regulator-name)" = "lcdb_$rail"
           done

@@ -159,3 +159,10 @@ Both staged panel nodes now describe the stock TE and reset wiring.
 The PM6150L GPIO controller used for reset is present but disabled, so
 this change does not toggle a pin. Host-side pinctrl, power rails,
 backlight, and reset sequencing remain to be validated before probing.
+
+The PM6150L SID 5 nodes describe the LCDB bias regulators and WLED
+backlight using 6.1 bindings and the stock Surya WLED string mask.
+Both providers are disabled. The WLED flash children and automatic
+string calibration are not enabled. Validate the string wiring, current
+limit, and panel rail enable/disable sequence before attaching these
+providers to the SDE/DSI host.
