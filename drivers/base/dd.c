@@ -23,6 +23,7 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/kthread.h>
 #include <linux/wait.h>
@@ -367,46 +368,60 @@ void deferred_probe_extend_timeout(void)
 }
 
 /* Surya first-stage init can exit before the normal deferred-probe timeout. */
-static bool surya_ufs_device(const struct device *dev)
-{
-	return dev->of_node &&
-	       (of_node_name_eq(dev->of_node, "ufshc") ||
-		of_node_name_eq(dev->of_node, "ufsphy_mem"));
-}
+static const char * const surya_storage_paths[] = {
+	"/soc/ufshc@1d84000",
+	"/soc/ufsphy_mem@1d87000",
+	"/soc/interconnect@1700000",
+	"/soc/interconnect@1620000",
+	"/soc/clock-controller@100000",
+	"/soc/rsc@18200000",
+	"/soc/rsc@18200000/drv@2",
+	"/soc/rsc@18200000/drv@2/bcm_voter",
+	"/soc/rsc@18200000/drv@2/clock-controller",
+};
 
-static int surya_ufs_binding_show(struct device *dev, void *unused)
+static bool surya_storage_device(const struct device *dev)
 {
-	if (surya_ufs_device(dev))
-		dev_notice(dev, "Surya storage snapshot: driver %s\n",
-			   READ_ONCE(dev->driver) ? "assigned" : "unbound");
-	return 0;
+	int i;
+
+	if (!dev->of_node)
+		return false;
+	for (i = 0; i < ARRAY_SIZE(surya_storage_paths); i++)
+		if (!strcmp(of_node_full_name(dev->of_node), surya_storage_paths[i]))
+			return true;
+	return false;
 }
 
 static void surya_ufs_snapshot(struct work_struct *work)
 {
-	static const char * const paths[] = {
-		"/soc/ufshc@1d84000", "/soc/ufsphy_mem@1d87000",
-	};
 	struct device_private *p;
 	struct device_node *np;
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(paths); i++) {
-		np = of_find_node_by_path(paths[i]);
-		pr_notice("Surya storage snapshot: %s %s\n", paths[i],
-			  !np ? "missing" : of_device_is_available(np) ?
-			  "enabled" : "disabled");
+	for (i = 0; i < ARRAY_SIZE(surya_storage_paths); i++) {
+		const char *path = surya_storage_paths[i];
+		struct platform_device *pdev;
+		const char *state;
+
+		np = of_find_node_by_path(path);
+		pdev = np ? of_find_device_by_node(np) : NULL;
+		state = !np ? "missing" : !of_device_is_available(np) ?
+			"disabled" : "enabled";
+		pr_notice("Surya storage snapshot: %s %s; %s\n", path, state,
+			  !pdev ? "no platform device" :
+			  READ_ONCE(pdev->dev.driver) ? "driver assigned" : "unbound");
+		if (pdev)
+			put_device(&pdev->dev);
 		of_node_put(np);
 	}
 
 	mutex_lock(&deferred_probe_mutex);
 	list_for_each_entry(p, &deferred_probe_pending_list, deferred_probe) {
-		if (surya_ufs_device(p->device))
+		if (surya_storage_device(p->device))
 			dev_notice(p->device, "Surya storage snapshot: deferred: %s\n",
 				   p->deferred_probe_reason ?: "reason unavailable");
 	}
 	mutex_unlock(&deferred_probe_mutex);
-	bus_for_each_dev(&platform_bus_type, NULL, NULL, surya_ufs_binding_show);
 }
 static DECLARE_DELAYED_WORK(surya_ufs_snapshot_work, surya_ufs_snapshot);
 
