@@ -279,6 +279,9 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           grep -Fq $'disabled\t'"$uart"$'\tpinctrl-0\t' "$RUNNER_TEMP/surya-tlmm-users.tsv"
 
+      - name: Test mixed interrupt providers in the TLMM inventory
+        run: PYTHON=/usr/bin/python3 sh scripts/dtc/test-surya-tlmm-users.sh
+
       - name: Check the Command DB integration fixture (not for flashing)
         run: |
           make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150-cmd-db-test.dtb

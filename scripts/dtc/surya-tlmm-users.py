@@ -3,6 +3,7 @@
 """Inventory DTB users of a TLMM provider without accessing hardware."""
 
 import argparse
+import itertools
 import re
 import struct
 from pathlib import Path
@@ -44,7 +45,10 @@ def inventory(fdt, tlmm):
                     offset = fdt.node_offset_by_phandle(phandle, libfdt.QUIET_NOTFOUND)
                     if offset >= 0 and fdt.get_path(offset).startswith(prefix):
                         yield node, enabled, name, fdt.get_path(offset)[len(prefix):]
-            elif name in ('gpio', 'gpios') or name.endswith(('-gpio', '-gpios')):
+            elif (name == 'interrupts-extended' or name in ('gpio', 'gpios')
+                  or name.endswith(('-gpio', '-gpios'))):
+                count_name = ('#interrupt-cells' if name == 'interrupts-extended'
+                              else '#gpio-cells')
                 if len(value) % 4:
                     continue
                 spec = iter(cells(value))
@@ -54,11 +58,13 @@ def inventory(fdt, tlmm):
                     offset = fdt.node_offset_by_phandle(phandle, libfdt.QUIET_NOTFOUND)
                     if offset < 0:
                         break
-                    count = fdt.getprop(offset, '#gpio-cells', libfdt.QUIET_NOTFOUND)
+                    count = fdt.getprop(offset, count_name, libfdt.QUIET_NOTFOUND)
                     if isinstance(count, int):
                         break
                     argc, = cells(count)
-                    args = [next(spec, None) for _ in range(argc)]
+                    args = list(itertools.islice(spec, argc))
+                    if len(args) != argc:
+                        break
                     if phandle == provider:
                         yield node, enabled, name, ' '.join(map(str, args))
             elif name == 'interrupts' and provider and parent_irq == provider:
