@@ -197,6 +197,7 @@ int qcom_icc_bcm_init(struct qcom_icc_provider *qp, struct qcom_icc_bcm *bcm,
 	const struct bcm_db *data;
 	struct bcm_voter *voter;
 	size_t data_count;
+	u32 addr;
 	int ret;
 	int i;
 
@@ -204,8 +205,8 @@ int qcom_icc_bcm_init(struct qcom_icc_provider *qp, struct qcom_icc_bcm *bcm,
 	if (bcm->disabled || bcm->addr)
 		return 0;
 
-	bcm->addr = cmd_db_read_addr(bcm->name);
-	if (!bcm->addr) {
+	addr = cmd_db_read_addr(bcm->name);
+	if (!addr) {
 		dev_err(dev, "%s could not find RPMh address\n",
 			bcm->name);
 		return -EINVAL;
@@ -229,6 +230,7 @@ int qcom_icc_bcm_init(struct qcom_icc_provider *qp, struct qcom_icc_bcm *bcm,
 	bcm->aux_data.reserved = data->reserved;
 	INIT_LIST_HEAD(&bcm->list);
 	INIT_LIST_HEAD(&bcm->ws_list);
+	bcm->addr = addr;
 
 	if (!bcm->vote_scale)
 		bcm->vote_scale = 1000;
@@ -623,7 +625,7 @@ void qcom_icc_rpmh_sync_state(struct device *dev)
 
 		for (i = 0; i < qp->num_bcms; i++) {
 			bcm = qp->bcms[i];
-			if (!bcm->keepalive && !bcm->keepalive_early)
+			if (!bcm->addr || (!bcm->keepalive && !bcm->keepalive_early))
 				continue;
 
 			bcm->keepalive_early = false;
