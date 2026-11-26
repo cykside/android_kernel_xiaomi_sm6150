@@ -649,3 +649,12 @@ It needs ``fdtget`` and ``fdtoverlay``. The base for this test is the
 symbol-enabled Surya UFS integration DTB, not the primary DTB. The
 script reports missing labels and deletes its temporary merge. It
 never writes a boot image or a partition.
+
+The device owner ran the same checker locally against the active
+``surya-active.dtbo``. It reported 77 missing labels out of 158 and
+``FDT_ERR_BADOVERLAY``. The missing-label list matches the stock
+baseline, but the total differs, so the two overlays must not be
+treated as identical. Do not repack the 6.1 fixture expecting the
+active overlay to merge. A useful control is to try that exact overlay
+against the single FDT extracted from the working boot image; even a
+successful control does not prove what ABL applies at boot.
