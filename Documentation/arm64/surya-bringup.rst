@@ -400,3 +400,20 @@ kernel compression separately. DTBO table order alone does not prove
 which entry ABL loaded. If available, compare the live FDT from the
 same firmware. Do not replace the stock kernel payload based only on
 these reports; reserved memory, TLMM, and UFS remain bring-up gates.
+
+The first compiled dump comparison (Actions run ``45774702701``) found
+10 partially overlapping pairs. They group into three review items:
+
+* Stock splash spans ``[0x9c000000, 0x9d700000)``; it overlaps both the
+  6.1 splash and display ramdump reservations. Do not enable splash
+  takeover until these ranges and their consumers are reconciled.
+* The 6.1 ADSP/CDSP firmware and WLAN MSA layout differs as a group.
+  Stock WLAN MSA and NPU occupy the end of the 6.1 ADSP range, while
+  the 6.1 WLAN MSA occupies the start of the stock CDSP range.
+* The stock XBL/AOP range encloses the 6.1 command DB range; do not
+  widen the 6.1 XBL/AOP reservation without checking ABL and AOP data.
+
+The audit now also displays the UFS host/PHY register, interrupt, lane,
+boot-device and reset properties from both compiled trees. Raw GPIO
+phandles are local to each DTB and must not be compared as pin numbers.
+No memory ranges or UFS enablement are changed by these checks.
