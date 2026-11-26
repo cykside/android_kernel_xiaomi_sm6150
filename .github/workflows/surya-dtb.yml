@@ -653,6 +653,27 @@ jobs:
           test -s out/surya/vmlinux
           test -s out/surya/arch/arm64/boot/Image.gz
           gzip -t out/surya/arch/arm64/boot/Image.gz
+      - name: Dry-run the observed Surya boot v2 layout
+        run: |
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150-ufs-test.dtb
+          python3 - <<'PYTHON' | tee -a "$GITHUB_STEP_SUMMARY"
+          import runpy
+          from pathlib import Path
+
+          tools = runpy.run_path('scripts/dtc/surya-boot-v2-layout.py')
+          boot = Path('out/surya/arch/arm64/boot')
+          observed = dict(page_size=4096, kernel_offset=4096,
+                          ramdisk_size=0xc1915, dtb_load_address=0x01f00000)
+          plan = tools['replacement_plan'](
+              observed, boot / 'Image.gz',
+              boot / 'dts/vendor/qcom/surya-sm6150-ufs-test.dtb')
+          print('### Observed Surya boot v2 layout — dry run only')
+          print('No boot image produced; excludes AVB and active DTBO validation.')
+          print('```text')
+          for field, value in plan.items():
+              print(f'{field}: {value:#x} ({value} bytes)')
+          print('```')
+          PYTHON
       - name: Report compiler cache statistics
         if: always()
         run: ccache --show-stats
