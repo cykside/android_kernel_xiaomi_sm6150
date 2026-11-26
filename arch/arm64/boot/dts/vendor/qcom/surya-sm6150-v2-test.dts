@@ -45,3 +45,16 @@
 &gcc {
 	compatible = "xiaomi,surya-gcc", "qcom,sm6150-gcc", "syscon";
 };
+
+/* RPMh clients obtain their controller from the immediate DRV parent. */
+/delete-node/ &disp_bcm_voter;
+&disp_rsc_drv0 {
+	surya_disp_bcm_voter: bcm_voter {
+		compatible = "qcom,bcm-voter";
+		qcom,tcs-wait = <QCOM_ICC_TAG_AMC>;
+	};
+};
+
+&mc_virt { qcom,bcm-voters = <&apps_bcm_voter>, <&surya_disp_bcm_voter>; };
+&gem_noc { qcom,bcm-voters = <&apps_bcm_voter>, <&surya_disp_bcm_voter>; };
+&mmss_noc { qcom,bcm-voters = <&apps_bcm_voter>, <&surya_disp_bcm_voter>; };
