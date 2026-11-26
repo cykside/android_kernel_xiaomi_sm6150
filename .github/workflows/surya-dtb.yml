@@ -656,6 +656,7 @@ jobs:
       - name: Dry-run the observed Surya boot v2 layout
         run: |
           make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150-ufs-test.dtb
+          set -o pipefail
           python3 - <<'PYTHON' | tee -a "$GITHUB_STEP_SUMMARY"
           import runpy
           from pathlib import Path
@@ -669,6 +670,8 @@ jobs:
               boot / 'dts/vendor/qcom/surya-sm6150-ufs-test.dtb')
           print('### Observed Surya boot v2 layout — dry run only')
           print('No boot image produced; excludes AVB and active DTBO validation.')
+          payload = plan['padded_payload_end']
+          print(f'::notice title=Surya boot v2 dry run::Aligned payload {payload} bytes; excludes AVB and DTBO validation')
           print('```text')
           for field, value in plan.items():
               print(f'{field}: {value:#x} ({value} bytes)')

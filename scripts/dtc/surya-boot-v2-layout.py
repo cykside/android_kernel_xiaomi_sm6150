@@ -70,11 +70,20 @@ def main():
     parser.add_argument('image', type=Path)
     parser.add_argument('--plan', nargs=2, type=Path, metavar=('IMAGE_GZ', 'DTB'),
                         help='calculate replacement offsets without writing an image')
+    parser.add_argument('--capacity', type=lambda value: int(value, 0), metavar='BYTES',
+                        help='measured boot partition capacity, for a dry run only')
     args = parser.parse_args()
+    if args.capacity is not None and (not args.plan or args.capacity <= 0):
+        parser.error('--capacity requires --plan and a positive capacity')
     try:
         layout = inspect(args.image)
         if args.plan:
             layout = replacement_plan(layout, *args.plan)
+            if args.capacity is not None:
+                remaining = args.capacity - layout['padded_payload_end']
+                if remaining < 0:
+                    raise ValueError(f'aligned payload exceeds measured capacity by {-remaining} bytes')
+                layout['remaining_before_avb'] = remaining
             print('Dry run only: excludes AVB/footer and does not check DTBO compatibility.')
         for key, value in layout.items():
             print(f'{key}: {value:#x}')
