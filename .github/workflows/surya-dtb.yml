@@ -542,6 +542,19 @@ jobs:
               done
               xbl=$(fdtget -t x "$merged" /reserved-memory/xbl_aop_mem@85e00000 reg)
               cmd=$(fdtget -t x "$merged" /soc/qcom,cmd-db@c3f000c reg)
+              test "$xbl" = '0 85e00000 0 1ff000'
+              test "$cmd" = 'c3f000c 8'
+              host=/soc/ufshc@1d84000
+              phy=/soc/ufsphy_mem@1d87000
+              host_reg=$(fdtget -t x "$merged" "$host" reg)
+              phy_reg=$(fdtget -t x "$merged" "$phy" reg)
+              printf '::notice title=Surya FSociety UFS reference::%s; host=%s; PHY=%s\n' "$name" "$host_reg" "$phy_reg"
+              for node in "$host" "$phy"; do
+                for property in compatible clock-names reset-names pinctrl-names; do
+                  value=$(fdtget -t s "$merged" "$node" "$property" 2>/dev/null || echo absent)
+                  printf '%s %s: %s\n' "$node" "$property" "$value" >> "$work/report"
+                done
+              done
               printf '::notice title=Surya FSociety merged layout::%s; XBL/AOP=%s; Command DB registers=%s\n' "$name" "$xbl" "$cmd"
             fi
             first=$(head -n 1 "$work/report")

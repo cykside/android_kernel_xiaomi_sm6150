@@ -744,3 +744,10 @@ still lacks the properties referenced by its 18 stale fixups; this
 experiment does not fix that artifact or make the 6.1 base compatible.
 Use the diagnostic merged source trees to cross-check register and
 reservation data, not as boot images or substitutes for the live tree.
+
+Both diagnostic merges in run ``45817917119`` reproduced the live
+XBL/AOP reservation and the eight-byte Command DB discovery resource.
+CI now checks those two values against the live observation when the
+source merge succeeds and reports UFS register windows separately.
+This corroborates the staged Command DB configuration, not the
+firmware-reported address read at runtime.
