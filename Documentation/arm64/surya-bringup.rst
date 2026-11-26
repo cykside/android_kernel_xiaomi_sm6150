@@ -193,3 +193,14 @@ incompatible bytes. The stock 4.14 sdmmagpie pinctrl table also puts
 GPIO 10 in the NORTH tile and selects ``mdp_vsync`` at mux slot 1; the
 6.1 table puts it in EAST and uses slot 1 for ``qup13``. Leave the shared
 mux table unchanged until the Surya pinctrl variant is established.
+
+Novatek SPI touch
+-----------------
+
+The stock J20 touch device is staged at chip select 0 on QUPv3 SE0,
+with its 19.2 MHz SPI limit, reset/IRQ GPIOs and L18/LCDB supplies. The
+SPI node and touch client are disabled. SE0 overlaps the base debug
+UART at 0x880000 (including its IRQ); do not enable SPI until the UART
+is relocated or disabled and the Surya SPI pinmux is verified. The
+legacy Novatek SPI driver and firmware selection still need a 6.1 port;
+this change does not import factory test tables.

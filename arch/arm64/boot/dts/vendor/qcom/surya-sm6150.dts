@@ -4,6 +4,7 @@
 #include "sm6150.dtsi"
 #include "surya-pm6150.dtsi"
 #include "surya-display.dtsi"
+#include "surya-touch.dtsi"
 
 /* Bring-up stub only. Do not flash: inherited platform data is unvalidated. */
 / {

@@ -140,3 +140,13 @@ jobs:
         run: |
           make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 \
             techpack/display/built-in.a drivers/clk/qcom/dispcc-sm6150.o
+      - name: Verify staged touch bus and compile GENI SPI
+        run: |
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+          bus=/soc/qcom,qupv3_0_geni_se@8c0000/spi@880000
+          touch=$bus/touchscreen@0
+          test "$(fdtget -t s "$dtb" "$bus" status)" = disabled
+          test "$(fdtget -t s "$dtb" "$touch" status)" = disabled
+          test "$(fdtget -t s "$dtb" "$touch" compatible)" = 'novatek,NVT-ts-spi'
+          test "$(fdtget -t u "$dtb" "$touch" spi-max-frequency)" = 19200000
+          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 drivers/spi/spi-msm-geni.o
