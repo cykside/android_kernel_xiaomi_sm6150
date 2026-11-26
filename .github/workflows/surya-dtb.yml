@@ -382,7 +382,8 @@ jobs:
           candidate=out/surya-dtb-for-audit/surya-sm6150-ufs-test.dtb
           dtc -I dts -O dtb -o "$work/idp.dtbo" "$work/idp.dts"
           fdtget -p "$work/idp.dtbo" /__fixups__ | LC_ALL=C sort -u > "$work/fixups.txt"
-          (fdtget -p "$candidate" /__symbols__ 2>/dev/null || true) | LC_ALL=C sort -u > "$work/symbols.txt"
+          fdtget -p "$candidate" /__symbols__ | LC_ALL=C sort -u > "$work/symbols.txt"
+          test -s "$work/symbols.txt"
           LC_ALL=C comm -23 "$work/fixups.txt" "$work/symbols.txt" > "$work/missing-fixups.txt"
           if fdtoverlay -i "$candidate" -o "$work/merged-test.dtb" "$work/idp.dtbo" > "$work/apply.txt" 2>&1; then
             overlay_result=applied
@@ -390,7 +391,8 @@ jobs:
             overlay_result=rejected
           fi
           missing=$(wc -l < "$work/missing-fixups.txt")
-          printf '::notice title=Surya overlay baseline::MIUI 14.0.1 overlay %s; missing fixup symbols: %s\n' "$overlay_result" "$missing"
+          refs=$(wc -l < "$work/fixups.txt")
+          printf '::notice title=Surya overlay baseline::MIUI 14.0.1 overlay %s; missing fixup symbols: %s/%s\n' "$overlay_result" "$missing" "$refs"
           {
             printf '### Stock overlay against the compile-only UFS DTB: %s\n\n' "$overlay_result"
             printf '\x60\x60\x60text\nMissing fixup symbols (%s):\n' "$missing"

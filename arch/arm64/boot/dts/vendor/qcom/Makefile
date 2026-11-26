@@ -6,3 +6,7 @@ dtb-$(CONFIG_ARCH_QCOM) += violet-sm6150.dtb
 # table pushes this DTB past that, so build without -@: violet-sm6150.dts
 # carries the only symbol the dtbo overlay needs (soc).
 DTC_NO_SYMBOLS := y
+
+# Only the offline Surya fixture needs symbols for stock overlay analysis.
+# Do not change the primary Surya or Violet DTB's symbol/size policy.
+DTC_FLAGS_surya-sm6150-ufs-test += -@
