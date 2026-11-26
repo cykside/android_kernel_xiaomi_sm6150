@@ -214,6 +214,12 @@ jobs:
           test "$(fdtget -t s "$dtb" "$tlmm" status)" = disabled
           test "$(fdtget -t s "$dtb" /soc/ufshc@1d84000 status)" = disabled
           test "$(fdtget -t s "$dtb" /soc/ufshc@1d84000 pinctrl-names)" = 'dev-reset-assert dev-reset-deassert'
+          cmd=/soc/command-db@c3f000c
+          xbl=/reserved-memory/xbl_aop_mem@85e00000
+          test "$(fdtget -t s "$dtb" "$cmd" status)" = disabled
+          test "$(fdtget -t x "$dtb" "$cmd" reg)" = 'c3f000c 8'
+          test "$(fdtget -t x "$dtb" "$xbl" reg)" = '0 85e00000 0 1ff000'
+          test "$(fdtget -t x "$dtb" "$cmd" memory-region)" = "$(fdtget -t x "$dtb" "$xbl" phandle)"
           ufs=/soc/ufshc@1d84000
           for index in 0 1; do
             if [ "$index" = 0 ]; then

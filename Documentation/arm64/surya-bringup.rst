@@ -546,3 +546,10 @@ This confirms the discovery resource on the active device, but does
 not identify the database's actual RAM address. A 6.1 discovery path
 should validate that the firmware-reported address and length are
 fully contained in reserved memory before mapping the database.
+
+The offline audit DTB now models this path using
+``qcom,sdmmagpie-cmd-db`` with an eight-byte ``reg`` and a
+``memory-region`` phandle to the live-sized, no-map XBL/AOP reservation.
+The driver checks containment before mapping, then checks magic and
+entry bounds. The discovery node is disabled in the audit DTB, and
+the primary Surya DTB retains its fixed mapping pending validation.

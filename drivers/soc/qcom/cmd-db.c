@@ -7,6 +7,7 @@
 #include <linux/bitfield.h>
 #include <linux/debugfs.h>
 #include <linux/kernel.h>
+#include <linux/io.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
@@ -354,18 +355,77 @@ bool cmd_db_is_standalone(void)
 }
 EXPORT_SYMBOL(cmd_db_is_standalone);
 
+static bool cmd_db_layout_valid(const struct cmd_db_header *db, size_t size)
+{
+	size_t available = size - sizeof(*db);
+	int i, j;
+
+	for (i = 0; i < MAX_SLV_ID; i++) {
+		const struct rsc_hdr *hdr = &db->header[i];
+		unsigned int count = le16_to_cpu(hdr->cnt);
+		unsigned int offset = le16_to_cpu(hdr->header_offset);
+		unsigned int data = le16_to_cpu(hdr->data_offset);
+		const struct entry_header *entries;
+
+		if (!count)
+			continue;
+		if (offset > available || count > (available - offset) / sizeof(*entries))
+			return false;
+		entries = (const struct entry_header *)(db->data + offset);
+		for (j = 0; j < count; j++) {
+			unsigned int start = data + le16_to_cpu(entries[j].offset);
+			unsigned int len = le16_to_cpu(entries[j].len);
+
+			if (start > available || len > available - start)
+				return false;
+		}
+	}
+	return true;
+}
+
 static int cmd_db_dev_probe(struct platform_device *pdev)
 {
+	struct device *dev = &pdev->dev;
+	bool discover = of_device_is_compatible(dev->of_node, "qcom,sdmmagpie-cmd-db");
 	struct reserved_mem *rmem;
-	int ret = 0;
+	phys_addr_t base, size;
+	int ret;
 
-	rmem = of_reserved_mem_lookup(pdev->dev.of_node);
-	if (!rmem) {
-		dev_err(&pdev->dev, "failed to acquire memory region\n");
-		return -EINVAL;
+	if (discover) {
+		struct device_node *region;
+		struct resource *res;
+		void __iomem *regs;
+
+		region = of_parse_phandle(dev->of_node, "memory-region", 0);
+		if (!region)
+			return -EINVAL;
+		rmem = of_reserved_mem_lookup(region);
+		of_node_put(region);
+		if (!rmem)
+			return -EINVAL;
+
+		res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+		if (!res || resource_size(res) < 8)
+			return -EINVAL;
+		regs = devm_ioremap_resource(dev, res);
+		if (IS_ERR(regs))
+			return PTR_ERR(regs);
+		base = readl_relaxed(regs);
+		size = readl_relaxed(regs + 4);
+		if (base < rmem->base || size > rmem->size ||
+		    base - rmem->base > rmem->size - size)
+			return dev_err_probe(dev, -EINVAL, "Command DB outside reserved memory\n");
+	} else {
+		rmem = of_reserved_mem_lookup(dev->of_node);
+		if (!rmem)
+			return dev_err_probe(dev, -EINVAL, "failed to acquire memory region\n");
+		base = rmem->base;
+		size = rmem->size;
 	}
 
-	cmd_db_header = devm_memremap(&pdev->dev, rmem->base, rmem->size, MEMREMAP_WC);
+	if (size < sizeof(*cmd_db_header))
+		return -EINVAL;
+	cmd_db_header = devm_memremap(dev, base, size, MEMREMAP_WC);
 	if (IS_ERR(cmd_db_header)) {
 		ret = PTR_ERR(cmd_db_header);
 		cmd_db_header = NULL;
@@ -378,6 +438,11 @@ static int cmd_db_dev_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
+	if (discover && !cmd_db_layout_valid(cmd_db_header, size)) {
+		cmd_db_header = NULL;
+		return dev_err_probe(dev, -EINVAL, "Invalid Command DB layout\n");
+	}
+
 	debugfs_create_file("cmd-db", 0400, NULL, NULL, &cmd_db_debugfs_ops);
 
 	if (cmd_db_is_standalone())
@@ -388,6 +453,7 @@ static int cmd_db_dev_probe(struct platform_device *pdev)
 
 static const struct of_device_id cmd_db_match_table[] = {
 	{ .compatible = "qcom,cmd-db" },
+	{ .compatible = "qcom,sdmmagpie-cmd-db" },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, cmd_db_match_table);

@@ -21,3 +21,18 @@
 	pinctrl-0 = <&ufs_dev_reset_assert>;
 	pinctrl-1 = <&ufs_dev_reset_deassert>;
 };
+
+/* Offline only: validate the alternative layout without probing it. */
+/delete-node/ &aop_cmd_db;
+&xbl_aop_mem {
+	reg = <0x0 0x85e00000 0x0 0x1ff000>;
+};
+
+&soc {
+	command-db@c3f000c {
+		compatible = "qcom,sdmmagpie-cmd-db";
+		reg = <0x0c3f000c 0x8>;
+		memory-region = <&xbl_aop_mem>;
+		status = "disabled";
+	};
+};
