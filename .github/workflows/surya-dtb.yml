@@ -284,7 +284,15 @@ jobs:
           make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150-cmd-db-test.dtb
           dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-cmd-db-test.dtb
           test "$(fdtget -t s "$dtb" /soc/command-db@c3f000c status)" = okay
-          for node in /soc/pinctrl@3400000 /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000; do
+          tlmm=/soc/pinctrl@3400000
+          test "$(fdtget -t s "$dtb" "$tlmm" status)" = okay
+          /usr/bin/python3 scripts/dtc/surya-tlmm-users.py "$dtb" "$tlmm" > "$RUNNER_TEMP/surya-integration-tlmm.tsv"
+          if grep -q '^available[[:space:]]' "$RUNNER_TEMP/surya-integration-tlmm.tsv"; then
+            cat "$RUNNER_TEMP/surya-integration-tlmm.tsv"
+            echo 'Integration fixture must not activate unvalidated TLMM consumers' >&2
+            exit 1
+          fi
+          for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000; do
             test "$(fdtget -t s "$dtb" "$node" status)" = disabled
           done
 

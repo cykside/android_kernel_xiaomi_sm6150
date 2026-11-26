@@ -82,3 +82,12 @@
 		label = "dfps_data_region";
 	};
 };
+
+/* Inherited UART pin states are not validated on SDMMagpie. */
+&qupv3_se4_2uart {
+	status = "disabled";
+};
+
+&qupv3_se7_4uart {
+	status = "disabled";
+};

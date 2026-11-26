@@ -572,7 +572,15 @@ validate display takeover or justify dropping any firmware-owned
 memory from the primary DTB.
 
 ``surya-sm6150-cmd-db-test.dts`` is a CI integration fixture that
-selects the discovery node while inheriting the audited reservations.
-It is not exported as a flash or boot artifact: TLMM, UFS and display
-are still disabled. Its compile-time checks do not exercise MMIO or
+selects the discovery node and SDMMagpie TLMM while inheriting the
+audited reservations.
+It is not exported as a flash or boot artifact: UFS and display
+remain unavailable for normal boot. Its compile-time checks do not exercise MMIO or
 validate the database contents on hardware.
+
+CI run ``45797381714`` identified two enabled inherited TLMM clients
+in the offline tree: the GENI UARTs at ``0xa80000`` and ``0xa8c000``.
+Both are now disabled in the offline tree and integration fixture.
+CI rejects any enabled consumer found by the inventory in the fixture.
+This is a static check, not validation of TLMM hardware or untracked
+consumer references. The main Surya DTB is unchanged.
