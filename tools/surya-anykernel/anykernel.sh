@@ -75,5 +75,8 @@ grep -Fq 'surya_report_repack; # SURYA_DIAGNOSTIC_NO_FLASH' tools/ak3-core.sh ||
   abort 'Diagnostic write guard missing.';
 split_boot;
 [ -s "$SPLITIMG/dtb" ] || abort 'Reference boot does not contain a separate DTB.';
+[ -s "$SPLITIMG/header" ] || abort 'Missing Android boot header metadata.';
+# The integration DTB disables SE0; keep the other reference boot args.
+patch_cmdline 'earlycon=' 'earlycon=ramoops,0x9da00000,0x40000';
 flash_boot;
 ui_print 'Diagnostic complete. No partitions were written.';

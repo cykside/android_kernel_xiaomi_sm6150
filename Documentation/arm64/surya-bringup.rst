@@ -843,3 +843,14 @@ The failure stage is unknown: this is not proof of an ABL rejection,
 a kernel panic, or a UFS failure. Do not repeat the same flash solely
 to recover logs. Before another device test, review the actual
 recovery repack path and establish a diagnostic capture method.
+
+The no-write TWRP report from the test device confirmed an unlocked,
+orange boot state, unchanged ramdisk bytes, and a byte-identical
+replacement DTB. The repacked image retained the reference
+``earlycon=msm_geni_serial,0x880000`` even though the integration tree
+disables the corresponding SE0 UART. This is a diagnostic mismatch,
+not proof of the cause of the reboot. The next no-write diagnostic
+replaces that single argument with the built-in ramoops early console.
+The address ``0x9da00000`` is the start of pmsg (1 MiB of crash records
+plus 1 MiB of console after ``0x9d800000``); the early mapping is limited
+to 256 KiB. Persistence through an actual reset is not yet verified.
