@@ -2074,7 +2074,7 @@ static int ufs_qcom_set_bus_vote(struct ufs_hba *hba, bool on)
 	if (on) {
 		vote = host->bus_vote.saved_vote;
 		if (vote == host->bus_vote.min_bw_vote)
-			ufs_qcom_update_bus_bw_vote(host);
+			return ufs_qcom_update_bus_bw_vote(host);
 	} else {
 		vote = host->bus_vote.min_bw_vote;
 	}
