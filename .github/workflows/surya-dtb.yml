@@ -491,6 +491,7 @@ jobs:
           sparse-checkout: |
             arch/arm64/boot/dts
             include/dt-bindings
+            include/uapi/linux
       - name: Install device tree compiler
         run: sudo apt-get update && sudo apt-get install -y device-tree-compiler
       - name: Compile the pinned base and both overlay variants offline
@@ -499,10 +500,17 @@ jobs:
           work=$(mktemp -d)
           trap 'rm -rf -- "$work"' EXIT
           for name in sdmmagpie sdmmagpie-idp-overlay sdmmagpie-idp-overlay-miui; do
-            gcc -E -nostdinc -I "$src/include" -undef -D__DTS__ -x assembler-with-cpp \
-              "$src/arch/arm64/boot/dts/qcom/$name.dts" -o "$work/$name.dts"
-            if ! dtc -q -@ -I dts -O dtb -o "$work/$name.dtb" "$work/$name.dts"; then
-              echo "::error title=Surya FSociety reference::Unable to compile $name"
+            if ! gcc -E -nostdinc -I "$src/include" -undef -D__DTS__ -x assembler-with-cpp \
+              "$src/arch/arm64/boot/dts/qcom/$name.dts" -o "$work/$name.dts" > "$work/cpp.log" 2>&1; then
+              cat "$work/cpp.log"
+              detail=$(grep -m 1 -E 'fatal error:|error:' "$work/cpp.log" || true)
+              printf '::error title=Surya FSociety preprocessing::%s: %s\n' "$name" "${detail//%/%25}"
+              exit 1
+            fi
+            if ! dtc -q -@ -I dts -O dtb -o "$work/$name.dtb" "$work/$name.dts" > "$work/dtc.log" 2>&1; then
+              cat "$work/dtc.log"
+              detail=$(head -n 1 "$work/dtc.log")
+              printf '::error title=Surya FSociety compilation::%s: %s\n' "$name" "${detail//%/%25}"
               exit 1
             fi
           done
