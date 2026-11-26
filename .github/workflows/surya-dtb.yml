@@ -671,7 +671,13 @@ jobs:
           print('### Observed Surya boot v2 layout — dry run only')
           print('No boot image produced; excludes AVB and active DTBO validation.')
           payload = plan['padded_payload_end']
-          print(f'::notice title=Surya boot v2 dry run::Aligned payload {payload} bytes; excludes AVB and DTBO validation')
+          # Measured with blockdev on the Surya test device, not inferred from the image.
+          capacity = 134217728
+          remaining = capacity - payload
+          if remaining < 0:
+              raise SystemExit(f'Aligned payload exceeds measured boot capacity by {-remaining} bytes')
+          plan.update(measured_boot_capacity=capacity, remaining_before_avb=remaining)
+          print(f'::notice title=Surya boot v2 dry run::Aligned payload {payload}/{capacity} bytes; {remaining} bytes left before AVB; DTBO unverified')
           print('```text')
           for field, value in plan.items():
               print(f'{field}: {value:#x} ({value} bytes)')

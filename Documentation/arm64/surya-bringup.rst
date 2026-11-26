@@ -766,3 +766,8 @@ The dry run retains the reference ramdisk size and DTB load address,
 validates the replacement gzip prefix and single-FDT size, and reports
 the padded payload end. It excludes AVB/footer data and does not
 establish boot-partition capacity, bootability or overlay compatibility.
+
+The test device's boot block device reports ``134217728`` bytes
+(128 MiB) via ``blockdev --getsize64``. CI compares the aligned v2
+payload with this measured capacity. The remaining space is reported
+before AVB; it is not a validated final image size or boot permission.
