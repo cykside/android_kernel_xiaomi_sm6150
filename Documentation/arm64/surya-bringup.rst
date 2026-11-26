@@ -530,3 +530,12 @@ covers the port's command DB subrange, but that does not establish
 whether firmware uses that subrange for command DB or exposes it through
 a separate device-tree node. Keep the port layout unchanged until the
 firmware consumers and the command DB mapping are reconciled.
+
+The pinned SDMMagpie 4.14 source declares ``qcom,cmd-db@c3f000c``
+with an eight-byte MMIO resource. Its driver reads the database
+address and size from those registers. In contrast, the 6.1 driver
+looks up a fixed reserved-memory node and validates the database
+magic there. The 4.14 MMIO address is not the database address; do
+not substitute it as the 6.1 reserved-memory base. Verify the live
+node and look for existing kernel diagnostics before choosing a
+mapping. Do not read raw physical memory from userspace.
