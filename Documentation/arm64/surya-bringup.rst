@@ -570,3 +570,9 @@ splash and DFPS at those addresses without a separate display ramdump
 node, so the offline variant follows the live layout. This does not
 validate display takeover or justify dropping any firmware-owned
 memory from the primary DTB.
+
+``surya-sm6150-cmd-db-test.dts`` is a CI integration fixture that
+selects the discovery node while inheriting the audited reservations.
+It is not exported as a flash or boot artifact: TLMM, UFS and display
+are still disabled. Its compile-time checks do not exercise MMIO or
+validate the database contents on hardware.

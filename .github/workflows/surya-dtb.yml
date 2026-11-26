@@ -271,6 +271,15 @@ jobs:
           cat "$RUNNER_TEMP/surya-tlmm-users.tsv"
           grep -Fq $'disabled\t'"$uart"$'\tpinctrl-0\t' "$RUNNER_TEMP/surya-tlmm-users.tsv"
 
+      - name: Check the Command DB integration fixture (not for flashing)
+        run: |
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150-cmd-db-test.dtb
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-cmd-db-test.dtb
+          test "$(fdtget -t s "$dtb" /soc/command-db@c3f000c status)" = okay
+          for node in /soc/pinctrl@3400000 /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000; do
+            test "$(fdtget -t s "$dtb" "$node" status)" = disabled
+          done
+
       - uses: actions/upload-artifact@v4
         with:
           name: surya-dtb-for-audit
