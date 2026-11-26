@@ -100,8 +100,10 @@ The smoke test verifies that the staging nodes remain disabled.
 
 The disabled PM6150 ADC5 node maps the six on-chip SMB5 measurements
 used by Surya's 4.14 charger: USB input voltage/current, charger and die
-temperature, SBU resistance and VPH voltage. The connector temperature
-input is on PM6150L AMUX THM1; its pull-up and thermistor curve still need
-verification against the stock device before it is wired into SMB5.
-Compare the ADC readings to stock before enabling charging; passing the
-DTB test only verifies the wiring description, not the readings.
+temperature, SBU resistance and VPH voltage. The disabled PM6150L ADC5
+node supplies the connector temperature channel. The 4.14 AMUX THM1
+PU2 channel ID (0x4d) maps to the 6.1 100 kOhm pull-up channel; the
+ratiometric setting and 200 us settle time are preserved. Compare the
+ADC readings, especially the connector thermistor curve, against stock
+hardware before enabling charging. The DTB test checks the description,
+not the readings.

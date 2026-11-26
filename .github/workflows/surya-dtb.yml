@@ -55,4 +55,7 @@ jobs:
           test "$(fdtget -t s "$dtb" "$pmic/charger" compatible)" = 'qcom,pm6150-smb5'
           test "$(fdtget -t s "$dtb" "$pmic/adc@3100" status)" = disabled
           test "$(fdtget -t s "$dtb" "$pmic/charger" io-channel-names)" = \
-            'usb_in_voltage usb_in_current chg_temp die_temp sbux_res vph_voltage'
+            'usb_in_voltage usb_in_current chg_temp die_temp conn_temp sbux_res vph_voltage'
+          conn_adc=${pmic%/*}/pmic@4/adc@3100
+          test "$(fdtget -t s "$dtb" "$conn_adc" status)" = disabled
+          test "$(fdtget -t x "$dtb" "$conn_adc/channel@4d" reg)" = 4d

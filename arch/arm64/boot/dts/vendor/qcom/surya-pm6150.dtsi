@@ -63,7 +63,7 @@
 			};
 		};
 
-		/* Charging policy and the PM6150L connector thermistor are pending. */
+		/* Charging policy is pending hardware validation. */
 		pm6150_charger: charger {
 			compatible = "qcom,pm6150-smb5";
 			#address-cells = <1>;
@@ -75,10 +75,12 @@
 				      <&pm6150_vadc ADC5_USB_IN_I>,
 				      <&pm6150_vadc ADC5_CHG_TEMP>,
 				      <&pm6150_vadc ADC5_DIE_TEMP>,
+				      <&pm6150l_vadc ADC5_AMUX_THM1_100K_PU>,
 				      <&pm6150_vadc ADC5_SBUx>,
 				      <&pm6150_vadc ADC5_VPH_PWR>;
 			io-channel-names = "usb_in_voltage", "usb_in_current",
-					   "chg_temp", "die_temp", "sbux_res", "vph_voltage";
+					   "chg_temp", "die_temp", "conn_temp", "sbux_res",
+					   "vph_voltage";
 
 			qcom,chgr@1000 {
 				reg = <0x1000>;
@@ -294,6 +296,33 @@
 					   "pe_start";
 			/* Do not probe until the charger policy is validated. */
 			status = "disabled";
+		};
+	};
+
+	pmic@4 {
+		compatible = "qcom,pm6150l", "qcom,spmi-pmic";
+		reg = <0x4 SPMI_USID>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		pm6150l_vadc: adc@3100 {
+			compatible = "qcom,spmi-adc5";
+			reg = <0x3100>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			#io-channel-cells = <1>;
+			interrupts = <0x4 0x31 0x0 IRQ_TYPE_EDGE_RISING>;
+			interrupt-names = "eoc-int-en-set";
+			status = "disabled";
+
+			/* 4.14 ADC_AMUX_THM1_PU2 uses the same channel ID. */
+			channel@4d {
+				reg = <ADC5_AMUX_THM1_100K_PU>;
+				label = "conn_therm";
+				qcom,ratiometric;
+				qcom,hw-settle-time = <200>;
+				qcom,pre-scaling = <1 1>;
+			};
 		};
 	};
 };
