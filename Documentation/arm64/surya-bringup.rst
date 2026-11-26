@@ -591,3 +591,10 @@ PHY supply phandles before checking those initial voltages. The rails
 can have other consumers; do not promote these settings to the main
 DTB without validating the shared votes. The host and PHY remain off,
 and this fixture is not a boot or flash candidate.
+
+The legacy RPMh regulator DTS declares ``proxy-supply`` references to
+L4 and L3C, independently of whether UFS probes. The UFS host's separate
+reference-clock supply parser reads its DT current limit and obtains a
+regulator handle; it does not set a fixed 1.2 V in that parser. Review
+available proxy and other consumers before changing the provider's
+initial voltage. An available DT node is not proof of an active vote.

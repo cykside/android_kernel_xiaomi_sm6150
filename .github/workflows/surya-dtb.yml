@@ -300,6 +300,14 @@ jobs:
           done
           /usr/bin/python3 scripts/dtc/surya-ufs-providers.py "$dtb" > "$RUNNER_TEMP/surya-integration-ufs.txt"
           cat "$RUNNER_TEMP/surya-integration-ufs.txt"
+          shared=$(grep '^  available:' "$RUNNER_TEMP/surya-integration-ufs.txt" || true)
+          count=$(awk 'NF {n++} END {print n+0}' <<< "$shared")
+          preview=$(awk 'NF && n++ < 6 {sub(/^  available: /, ""); printf "%s; ", $0}' <<< "$shared")
+          printf '::notice title=Surya shared UFS supplies::%s available supply references (first six): %s\n' "$count" "${preview//%/%25}"
+          {
+            printf '### Available shared UFS supply references (%s)\n\n' "$count"
+            printf '\x60\x60\x60text\n%s\n\x60\x60\x60\n' "$shared"
+          } >> "$GITHUB_STEP_SUMMARY"
           for voltage in 2944000 1696000 824000 1144000; do
             grep -Fx "    qcom,init-voltage: $voltage" "$RUNNER_TEMP/surya-integration-ufs.txt"
           done
