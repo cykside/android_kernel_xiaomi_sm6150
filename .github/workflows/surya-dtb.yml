@@ -343,6 +343,29 @@ jobs:
           restore-keys: surya-ccache-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: Resolve the Surya configuration
         run: make O=out/surya ARCH=arm64 LLVM=1 gki_defconfig vendor/surya.config
+      - name: Compare vendor module requests against resolved Surya config
+        run: |
+          report="$RUNNER_TEMP/surya-module-config.tsv"
+          awk -F= '
+            FNR == NR {
+              if ($1 ~ /^CONFIG_/) state[$1] = $2
+              next
+            }
+            /^CONFIG_.*=m$/ {print $1 "\t" (($1 in state) ? state[$1] : "unset")}
+          ' out/surya/.config arch/arm64/configs/vendor/sdmsteppeauto_GKI.config > "$report"
+          test -s "$report"
+          {
+            echo '### sdmsteppeauto module options in resolved Surya config'
+            awk -F '\t' '{count[$2]++} END {
+              printf "Requested: %d; modular: %d; built-in: %d; disabled/unset: %d\n", NR, count["m"], count["y"], NR-count["m"]-count["y"]
+            }' "$report"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: surya-module-config-audit
+          path: ${{ runner.temp }}/surya-module-config.tsv
+          if-no-files-found: error
+          retention-days: 7
       - name: Link the arm64 kernel and build Image.gz
         run: |
           log="$RUNNER_TEMP/surya-kernel-build.log"
