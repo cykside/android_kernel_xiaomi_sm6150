@@ -347,6 +347,14 @@ jobs:
             END {exit (unexpected || h != 4 || p != 2)}
           ' "$RUNNER_TEMP/surya-ufs-test.txt"
 
+      - name: Build the minimal-symbol Surya overlay base (offline only)
+        run: |
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150-v2-test.dtb
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-v2-test.dtb
+          test "$(fdtget -p "$dtb" /__symbols__)" = soc
+          test "$(fdtget -t s "$dtb" /__symbols__ soc)" = /soc
+          test "$(fdtget -t x "$dtb" / xiaomi,surya-overlay-target)" = "$(fdtget -t x "$dtb" /soc phandle)"
+
       - uses: actions/upload-artifact@v4
         with:
           name: surya-dtb-for-audit
@@ -354,6 +362,7 @@ jobs:
             out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
             out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-tlmm-audit.dtb
             out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-ufs-test.dtb
+            out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-v2-test.dtb
           if-no-files-found: error
           retention-days: 3
 
@@ -377,13 +386,14 @@ jobs:
         run: |
           work=$(mktemp -d)
           trap 'rm -rf -- "$work"' EXIT
-          base=out/surya-dtb-for-audit/surya-sm6150-ufs-test.dtb
+          base=out/surya-dtb-for-audit/surya-sm6150-v2-test.dtb
           dtc -@ -I dts -O dtb -o "$work/marker.dtbo" \
             arch/arm64/boot/dts/vendor/qcom/surya-sm6150-overlay-test.dts
           test "$(fdtget -t u "$work/marker.dtbo" / qcom,msm-id)" = '365 0'
           test "$(fdtget -t u "$work/marker.dtbo" / qcom,board-id)" = '34 0'
           fdtoverlay -i "$base" -o "$work/merged.dtb" "$work/marker.dtbo"
-          fdtget -p "$work/merged.dtb" /chosen | grep -Fx linux,surya-overlay-test
+          test "$(fdtget -p "$work/marker.dtbo" /__fixups__)" = soc
+          fdtget -p "$work/merged.dtb" /soc | grep -Fx xiaomi,surya-overlay-test
           for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000 /soc/pinctrl@3400000; do
             test "$(fdtget -t s "$work/merged.dtb" "$node" status)" = okay
           done

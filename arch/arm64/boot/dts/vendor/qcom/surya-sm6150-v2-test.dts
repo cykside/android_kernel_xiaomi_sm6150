@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/* Offline fixture only: exercise the same single-symbol scheme as Violet. */
+#include "surya-sm6150-ufs-test.dts"
+
+/ {
+	/* Give the target a phandle without exporting every label with -@. */
+	xiaomi,surya-overlay-target = <&soc>;
+	__symbols__ {
+		soc = "/soc";
+	};
+};

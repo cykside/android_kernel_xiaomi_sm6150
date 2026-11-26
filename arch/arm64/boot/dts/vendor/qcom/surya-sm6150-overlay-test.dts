@@ -6,14 +6,8 @@
 / {
 	qcom,msm-id = <365 0>;
 	qcom,board-id = <34 0>;
+};
 
-	fragment@0 {
-		target-path = "/";
-
-		__overlay__ {
-			chosen {
-				linux,surya-overlay-test;
-			};
-		};
-	};
+&soc {
+	xiaomi,surya-overlay-test;
 };

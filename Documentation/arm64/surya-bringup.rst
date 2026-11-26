@@ -813,7 +813,9 @@ as unvalidated; a successful offline repack is not a flash gate.
 An offline marker overlay (``surya-sm6150-overlay-test.dts``) exercises
 an alternative pairing: the 6.1 fixture supplies its staged hardware
 configuration directly, and the matching overlay adds only a marker
-under ``/chosen`` using an explicit root path. This avoids reliance on
-4.14 external labels in the experiment. It is not proof that ABL
+under ``/soc`` using one exported ``soc`` symbol. The separate
+``surya-sm6150-v2-test.dts`` provides the symbol and phandle explicitly
+without ``-@``, following Violet's local DTB convention. This avoids
+reliance on other 4.14 external labels in the experiment. It is not proof that ABL
 selects or accepts this pair, does not port all active overlay content,
 and is not built into a partition image or published for installation.
