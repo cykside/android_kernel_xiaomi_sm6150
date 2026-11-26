@@ -67,3 +67,18 @@
 &cdsp_pas {
 	status = "disabled";
 };
+
+/* The live display layout is contiguous with ramoops, without ramdump. */
+&cont_splash_memory {
+	reg = <0x0 0x9c000000 0x0 0x1700000>;
+};
+
+/delete-node/ &dfps_data_memory;
+/delete-node/ &disp_rdump_memory;
+
+&{/reserved-memory} {
+	dfps_data_memory: dfps_data_region@9d700000 {
+		reg = <0x0 0x9d700000 0x0 0x100000>;
+		label = "dfps_data_region";
+	};
+};

@@ -243,6 +243,15 @@ jobs:
           test "$(fdtget -t x "$dtb" "$reserved/npu_region@97680000" reg)" = '0 97680000 0 80000'
           test "$(fdtget -t s "$dtb" /soc/remoteproc-adsp@62400000 status)" = disabled
           test "$(fdtget -t s "$dtb" /soc/remoteproc-cdsp@0x8300000 status)" = disabled
+          test "$(fdtget -t x "$dtb" "$reserved/splash_region" reg)" = '0 9c000000 0 1700000'
+          test "$(fdtget -t x "$dtb" "$reserved/dfps_data_region@9d700000" reg)" = '0 9d700000 0 100000'
+          test "$(fdtget -t x "$dtb" "$reserved/ramoops@9d800000" reg)" = '0 9d800000 0 400000'
+          for old in wlan_msa_region@93900000 dfps_data_region@9cf00000 disp_rdump_region@9c000000; do
+            if fdtget "$dtb" "$reserved/$old" reg >/dev/null 2>&1; then
+              echo "Offline layout must not retain $old" >&2
+              exit 1
+            fi
+          done
           ufs=/soc/ufshc@1d84000
           for index in 0 1; do
             if [ "$index" = 0 ]; then
