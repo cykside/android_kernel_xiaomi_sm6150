@@ -16,7 +16,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm lld flex bison bc libelf-dev libssl-dev device-tree-compiler
+          sudo apt-get install -y clang llvm lld flex bison bc libelf-dev libssl-dev device-tree-compiler python3-libfdt
       - name: Configure Surya and verify the fragment
         run: |
           make O=out/surya ARCH=arm64 LLVM=1 gki_defconfig vendor/surya.config
@@ -202,6 +202,9 @@ jobs:
           test "$(fdtget -t s "$dtb" "$tlmm" status)" = disabled
           uart=/soc/qcom,qupv3_0_geni_se@8c0000/qcom,qup_uart@0x880000
           test "$(fdtget -t s "$dtb" "$uart" status)" = disabled
+          /usr/bin/python3 scripts/dtc/surya-tlmm-users.py "$dtb" "$tlmm" > "$RUNNER_TEMP/surya-tlmm-users.tsv"
+          cat "$RUNNER_TEMP/surya-tlmm-users.tsv"
+          grep -Fq $'disabled\t'"$uart"$'\tpinctrl-0\t' "$RUNNER_TEMP/surya-tlmm-users.tsv"
 
   surya-kernel-image:
     needs: surya-dtb

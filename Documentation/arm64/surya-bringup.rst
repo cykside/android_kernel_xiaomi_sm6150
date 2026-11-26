@@ -273,3 +273,15 @@ SE0 debug UART are disabled in this audit DTB. Do not boot or flash it.
 The primary Surya DTB and the Violet controller are unchanged. Before
 any switch, audit inherited consumers (UART, SD, USB and other GPIO
 users) against the SDMMagpie pin table and the running stock FDT.
+
+To inventory consumers before the switch, install ``python3-libfdt`` and
+run the following on each compiled or stock DTB, supplying its TLMM
+node path::
+
+    /usr/bin/python3 scripts/dtc/surya-tlmm-users.py surya-sm6150-tlmm-audit.dtb /soc/pinctrl@3400000
+
+The report lists standard pinctrl, GPIO and inherited interrupt-parent
+references and accounts for disabled ancestors. It is a starting point:
+legacy vendor properties and ``interrupts-extended`` need manual review.
+CI prints the audit report and checks that it includes the disabled SE0
+UART pinctrl reference.
