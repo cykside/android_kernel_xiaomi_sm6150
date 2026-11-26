@@ -908,6 +908,20 @@ jobs:
           test "$(fdtget -t s dtb "$voter" compatible)" = qcom,bcm-voter
           test "$(fdtget -t u dtb "$rsc/drv@2" qcom,drv-id)" = 2
           test "$(fdtget -t x dtb "$rsc" power-domains)" = "$(fdtget -t x dtb /psci/cluster-pd phandle)"
+          test "$(fdtget -t s dtb /psci compatible)" = arm,psci-1.0
+          test "$(fdtget -t s dtb /psci method)" = smc
+          test "$(fdtget -t s dtb "$rsc/drv@2/clock-controller" compatible)" = qcom,sm6150-rpmh-clk
+          test "$(fdtget -t s dtb "$host" compatible)" = qcom,ufshc
+          test "$(fdtget -t s dtb "$phy" compatible)" = qcom,ufs-phy-qmp-v3
+          test "$(fdtget -t x dtb "$host" phys)" = "$(fdtget -t x dtb "$phy" phandle)"
+          # Preserve the contiguous FSociety splash, DFPS and pstore ranges.
+          test "$(fdtget -t x dtb /reserved-memory/splash_region reg)" = '0 9c000000 0 1700000'
+          test "$(fdtget -t x dtb /reserved-memory/dfps_data_region@9d700000 reg)" = '0 9d700000 0 100000'
+          test "$(fdtget -t x dtb /reserved-memory/ramoops@9d800000 reg)" = '0 9d800000 0 400000'
+          if fdtget -l dtb /reserved-memory | grep -Fxq disp_rdump_region@9c000000; then
+            echo '::error::Inherited display ramdump overlaps the Surya splash reservation'
+            exit 1
+          fi
           ramoops_properties=$(fdtget -p dtb /reserved-memory/ramoops@9d800000)
           grep -qx no-map <<< "$ramoops_properties"
           gdsc=/soc/qcom,gdsc@177004
