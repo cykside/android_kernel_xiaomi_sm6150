@@ -69,6 +69,25 @@ surya_report_repack() {
   return 0;
 }
 
+surya_pmsg_probe() {
+  local log marker result;
+  marker=SURYA_AK3_PMSG_TEST_V1;
+  result='Marker not found in recovery pstore.';
+  for log in /sys/fs/pstore/pmsg-ramoops-*; do
+    [ -r "$log" ] || continue;
+    if grep -aqF "$marker" "$log"; then
+      result='Marker found: recovery read pmsg from a previous boot.';
+      break;
+    fi;
+  done;
+  ui_print "$result";
+  if [ -w /dev/pmsg0 ] && printf '%s\n' "$marker" > /dev/pmsg0; then
+    ui_print 'Marker written to RAM. Reboot directly to Recovery and run this ZIP again.';
+  else
+    ui_print 'Recovery cannot write /dev/pmsg0; marker test unavailable.';
+  fi;
+}
+
 ui_print 'Diagnostic only: Boot, DTBO and vbmeta will not be written.';
 # Refuse to run an unmodified AnyKernel3 core.
 grep -Fq 'surya_report_repack; # SURYA_DIAGNOSTIC_NO_FLASH' tools/ak3-core.sh ||
@@ -81,4 +100,5 @@ patch_cmdline 'earlycon=' 'earlycon=ramoops,0x9da00000,0x40000';
 patch_cmdline 'reboot=' 'reboot=warm';
 patch_cmdline 'panic=' 'panic=5';
 flash_boot;
+surya_pmsg_probe;
 ui_print 'Diagnostic complete. No partitions were written.';
