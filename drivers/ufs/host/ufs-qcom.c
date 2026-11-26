@@ -2197,14 +2197,14 @@ static int ufs_qcom_bus_register(struct ufs_qcom_host *host)
 
 	qsd->ufs_ddr = of_icc_get(dev, UFS_DDR);
 	if (IS_ERR(qsd->ufs_ddr)) {
-		dev_err(dev, "Error: (%d) failed getting %s path\n",
+		dev_err(dev, "Error: (%ld) failed getting %s path\n",
 			PTR_ERR(qsd->ufs_ddr), UFS_DDR);
 		return PTR_ERR(qsd->ufs_ddr);
 	}
 
 	qsd->cpu_ufs = of_icc_get(dev, CPU_UFS);
 	if (IS_ERR(qsd->cpu_ufs)) {
-		dev_err(dev, "Error: (%d) failed getting %s path\n",
+		dev_err(dev, "Error: (%ld) failed getting %s path\n",
 			PTR_ERR(qsd->cpu_ufs), CPU_UFS);
 		return PTR_ERR(qsd->cpu_ufs);
 	}
