@@ -658,6 +658,9 @@ jobs:
           grep -Fx CONFIG_ARM_SMMU_QCOM=y out/surya/.config
           grep -Fx CONFIG_REGULATOR_RPMH=y out/surya/.config
           grep -Fx CONFIG_NVMEM_QCOM_QFPROM=y out/surya/.config
+          for config in SM_GCC_6150 INTERCONNECT_QCOM_SM6150 PHY_QCOM_UFS_V3 SCSI_UFS_QCOM; do
+            grep -Fx "CONFIG_${config}=y" out/surya/.config
+          done
           awk -F= '
             FNR == NR {
               if ($1 ~ /^CONFIG_/) state[$1] = $2
@@ -878,6 +881,7 @@ jobs:
           host=/soc/ufshc@1d84000
           phy=/soc/ufsphy_mem@1d87000
           aggre=/soc/interconnect@16e0000
+          test "$(fdtget -t s dtb /soc/clock-controller@100000 compatible)" = 'xiaomi,surya-gcc qcom,sm6150-gcc syscon'
           test "$(fdtget -t x dtb "$aggre" reg)" = '16e0000 11080'
           phy_properties=$(fdtget -p dtb "$phy")
           aggre_properties=$(fdtget -p dtb "$aggre")
