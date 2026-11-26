@@ -686,75 +686,6 @@ jobs:
           test -s out/surya/vmlinux
           test -s out/surya/arch/arm64/boot/Image.gz
           gzip -t out/surya/arch/arm64/boot/Image.gz
-      - name: Dry-run the observed Surya boot v2 layout
-        run: |
-          make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150-ufs-test.dtb
-          set -o pipefail
-          python3 - <<'PYTHON' | tee -a "$GITHUB_STEP_SUMMARY"
-          import runpy
-          from pathlib import Path
-
-          tools = runpy.run_path('scripts/dtc/surya-boot-v2-layout.py')
-          boot = Path('out/surya/arch/arm64/boot')
-          observed = dict(page_size=4096, kernel_offset=4096,
-                          ramdisk_size=0xc1915, dtb_load_address=0x01f00000)
-          plan = tools['replacement_plan'](
-              observed, boot / 'Image.gz',
-              boot / 'dts/vendor/qcom/surya-sm6150-ufs-test.dtb')
-          print('### Observed Surya boot v2 layout — dry run only')
-          print('No boot image produced; excludes AVB and active DTBO validation.')
-          payload = plan['padded_payload_end']
-          # Measured with blockdev on the Surya test device, not inferred from the image.
-          capacity = 134217728
-          remaining = capacity - payload
-          if remaining < 0:
-              raise SystemExit(f'Aligned payload exceeds measured boot capacity by {-remaining} bytes')
-          plan.update(measured_boot_capacity=capacity, remaining_before_avb=remaining)
-          print(f'::notice title=Surya boot v2 dry run::Aligned payload {payload}/{capacity} bytes; {remaining} bytes left before AVB; DTBO unverified')
-          print('```text')
-          for field, value in plan.items():
-              print(f'{field}: {value:#x} ({value} bytes)')
-          print('```')
-          PYTHON
-      - name: Round-trip an unsigned Surya boot v2 fixture (offline only)
-        run: |
-          python3 - <<'PYTHON'
-          import runpy
-          import struct
-          import tempfile
-          from pathlib import Path
-
-          boot = Path('out/surya/arch/arm64/boot')
-          kernel = boot / 'Image.gz'
-          dtb = boot / 'dts/vendor/qcom/surya-sm6150-ufs-test.dtb'
-          old_kernel = bytes.fromhex('1f8b08')  # Synthetic prefix, not a bootable kernel.
-          old_dtb = struct.pack('>II', 0xd00dfeed, 40) + bytes(32)
-          ramdisk = b'reference-ramdisk-fixture' * 301
-          header = bytearray(1660)
-          header[:8] = b'ANDROID!'
-          for offset, value in ((8, len(old_kernel)), (16, len(ramdisk)),
-                                (36, 4096), (40, 2), (1644, 1660),
-                                (1648, len(old_dtb)), (1652, 0x01f00000)):
-              struct.pack_into('<I', header, offset, value)
-
-          tools = runpy.run_path('scripts/dtc/surya-boot-v2-repack-offline.py')
-          with tempfile.TemporaryDirectory() as directory:
-              reference = Path(directory) / 'reference.img'
-              output = Path(directory) / 'surya.unsigned-fixture.img'
-              reference.write_bytes(b''.join(bytes(section) + bytes(-len(section) % 4096)
-                                             for section in (header, old_kernel, ramdisk, old_dtb))
-                                    + b'AVBf' + bytes(60))
-              layout = tools['repack'](reference, kernel, dtb, output)
-              image = output.read_bytes()
-              for offset, data in ((layout['kernel_offset'], kernel.read_bytes()),
-                                   (layout['ramdisk_offset'], ramdisk),
-                                   (layout['dtb_offset'], dtb.read_bytes())):
-                  if image[offset:offset + len(data)] != data:
-                      raise SystemExit(f'Payload mismatch at {offset:#x}')
-              if image[-64:-60] == b'AVBf':
-                  raise SystemExit('Offline repack unexpectedly carried the reference footer')
-          print('Surya v2 round-trip passed; no image retained or published.')
-          PYTHON
       - name: Package the Surya single-symbol test pair for inspection
         run: |
           make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150-v2-test.dtb
@@ -811,6 +742,88 @@ jobs:
           Do not install this archive in TWRP or write these files to a partition.
           EOF
           (cd "$bundle" && sha256sum Image.gz surya-base.dtb surya-ufs.dtbo surya-ufs.dtbo-table.test > SHA256SUMS)
+      - name: Dry-run the observed Surya boot v2 layout
+        run: |
+          set -o pipefail
+          python3 - <<'PYTHON' | tee -a "$GITHUB_STEP_SUMMARY"
+          import runpy
+          from pathlib import Path
+          from os import environ
+
+          tools = runpy.run_path('scripts/dtc/surya-boot-v2-layout.py')
+          bundle = Path(environ['RUNNER_TEMP']) / 'surya-offline-pair'
+          observed = dict(page_size=4096, kernel_offset=4096,
+                          ramdisk_size=0xc1915, dtb_load_address=0x01f00000)
+          plan = tools['replacement_plan'](
+              observed, bundle / 'Image.gz', bundle / 'surya-base.dtb')
+          print('### Observed Surya boot v2 layout — dry run only')
+          print('No boot image produced; excludes AVB and active DTBO validation.')
+          payload = plan['padded_payload_end']
+          # Measured with blockdev on the Surya test device, not inferred from the image.
+          capacity = 134217728
+          remaining = capacity - payload
+          if remaining < 0:
+              raise SystemExit(f'Aligned payload exceeds measured boot capacity by {-remaining} bytes')
+          plan.update(measured_boot_capacity=capacity, remaining_before_avb=remaining)
+          print(f'::notice title=Surya boot v2 dry run::Aligned payload {payload}/{capacity} bytes; {remaining} bytes left before AVB; DTBO unverified')
+          print('```text')
+          for field, value in plan.items():
+              print(f'{field}: {value:#x} ({value} bytes)')
+          print('```')
+          PYTHON
+      - name: Round-trip an unsigned Surya boot v2 fixture (offline only)
+        run: |
+          python3 - <<'PYTHON'
+          import runpy
+          import struct
+          import subprocess
+          import tempfile
+          from pathlib import Path
+          from os import environ
+
+          bundle = Path(environ['RUNNER_TEMP']) / 'surya-offline-pair'
+          kernel = bundle / 'Image.gz'
+          dtb = bundle / 'surya-base.dtb'
+          old_kernel = bytes.fromhex('1f8b08')  # Synthetic prefix, not a bootable kernel.
+          old_dtb = struct.pack('>II', 0xd00dfeed, 40) + bytes(32)
+          ramdisk = b'reference-ramdisk-fixture' * 301
+          header = bytearray(1660)
+          header[:8] = b'ANDROID!'
+          for offset, value in ((8, len(old_kernel)), (16, len(ramdisk)),
+                                (36, 4096), (40, 2), (1644, 1660),
+                                (1648, len(old_dtb)), (1652, 0x01f00000)):
+              struct.pack_into('<I', header, offset, value)
+
+          tools = runpy.run_path('scripts/dtc/surya-boot-v2-repack-offline.py')
+          with tempfile.TemporaryDirectory() as directory:
+              reference = Path(directory) / 'reference.img'
+              output = Path(directory) / 'surya.unsigned-fixture.img'
+              reference.write_bytes(b''.join(bytes(section) + bytes(-len(section) % 4096)
+                                             for section in (header, old_kernel, ramdisk, old_dtb))
+                                    + b'AVBf' + bytes(60))
+              layout = tools['repack'](reference, kernel, dtb, output)
+              image = output.read_bytes()
+              for offset, data in ((layout['kernel_offset'], kernel.read_bytes()),
+                                   (layout['ramdisk_offset'], ramdisk),
+                                   (layout['dtb_offset'], dtb.read_bytes())):
+                  if image[offset:offset + len(data)] != data:
+                      raise SystemExit(f'Payload mismatch at {offset:#x}')
+              boot_dtb = Path(directory) / 'extracted-boot.dtb'
+              boot_dtb.write_bytes(image[layout['dtb_offset']:layout['dtb_offset'] + layout['dtb_size']])
+              packed = (bundle / 'surya-ufs.dtbo-table.test').read_bytes()
+              size, offset = struct.unpack_from('>II', packed, 32)
+              overlay = Path(directory) / 'extracted-overlay.dtbo'
+              overlay.write_bytes(packed[offset:offset + size])
+              merged = Path(directory) / 'merged.dtb'
+              subprocess.run(['fdtoverlay', '-i', str(boot_dtb), '-o', str(merged), str(overlay)], check=True)
+              for node in ('/soc/ufshc@1d84000', '/soc/ufsphy_mem@1d87000'):
+                  status = subprocess.check_output(['fdtget', '-t', 's', str(merged), node, 'status'], text=True)
+                  if status.strip() != 'okay':
+                      raise SystemExit(f'UFS not enabled after repack and packed overlay: {node}')
+              if image[-64:-60] == b'AVBf':
+                  raise SystemExit('Offline repack unexpectedly carried the reference footer')
+          print('Surya v2 round-trip passed; no image retained or published.')
+          PYTHON
       - uses: actions/upload-artifact@v4
         with:
           name: surya-v2-pair-OFFLINE-NOT-FOR-FLASH
