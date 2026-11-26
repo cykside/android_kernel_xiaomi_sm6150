@@ -623,7 +623,7 @@ jobs:
       - name: Install kernel build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm lld flex bison bc libelf-dev libssl-dev dwarves ccache
+          sudo apt-get install -y clang llvm lld flex bison bc libelf-dev libssl-dev dwarves ccache device-tree-compiler
       - uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
@@ -746,6 +746,34 @@ jobs:
                   raise SystemExit('Offline repack unexpectedly carried the reference footer')
           print('Surya v2 round-trip passed; no image retained or published.')
           PYTHON
+      - name: Package the Surya single-symbol test pair for inspection
+        run: |
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150-v2-test.dtb
+          boot=out/surya/arch/arm64/boot
+          bundle="$RUNNER_TEMP/surya-offline-pair"
+          mkdir -p "$bundle"
+          cp "$boot/Image.gz" "$bundle/Image.gz"
+          cp "$boot/dts/vendor/qcom/surya-sm6150-v2-test.dtb" "$bundle/surya-base.dtb"
+          dtc -@ -I dts -O dtb -o "$bundle/surya-marker.dtbo" \
+            arch/arm64/boot/dts/vendor/qcom/surya-sm6150-overlay-test.dts
+          test "$(fdtget -p "$bundle/surya-base.dtb" /__symbols__)" = soc
+          test "$(fdtget -p "$bundle/surya-marker.dtbo" /__fixups__)" = soc
+          sh scripts/dtc/surya-overlay-check.sh "$bundle/surya-base.dtb" "$bundle/surya-marker.dtbo"
+          cat > "$bundle/README.txt" <<'EOF'
+          POCO X3 NFC (surya), Linux 6.1, offline test components only.
+          This archive is NOT an AnyKernel3 installer and contains no flashable boot or DTBO partition image.
+          Image.gz is the kernel payload; surya-base.dtb and surya-marker.dtbo are the matching experimental pair.
+          The marker overlay does not replace the active device overlay for installation purposes.
+          Bootloader acceptance, AVB and UFS operation on hardware have not been validated.
+          Do not install this archive in TWRP or write these files to a partition.
+          EOF
+          (cd "$bundle" && sha256sum Image.gz surya-base.dtb surya-marker.dtbo > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: surya-v2-pair-OFFLINE-NOT-FOR-FLASH
+          path: ${{ runner.temp }}/surya-offline-pair/
+          if-no-files-found: error
+          retention-days: 7
       - name: Report compiler cache statistics
         if: always()
         run: ccache --show-stats
