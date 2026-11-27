@@ -1630,3 +1630,82 @@ clocks``, ``scsi 0:0:0:0: ...`` / ``sda``, ``/dev/disk/by-name/`` populating
 and first stage mounting ``super``.  If a ``Surya gcc:`` marker is the last
 line of the boot, the stage after it is the blocker, by name rather than by
 inference.
+
+Capture 12: the rails resolve, and GCC stops on an SM8150 clock block
+-----------------------------------------------------------------------------
+
+``initcall_debug`` being off did what it was meant to do -- the capture came back
+at 66 KB instead of 234 KB, single-boot -- and the one-word stage markers paid for
+themselves immediately.  What ``console-ramoops-12.txt`` (2026-11-28 23:04)
+shows, reconstructed where the record walk desyncs at the head of the prz:
+
+.. code-block:: none
+
+  0.566959 ufshcd-qcom 1d84000.ufshc: ufshcd_parse_regulator_info: Unable to find vcc-supply regulator, assuming enabled
+  0.744291 ufshcd-qcom 1d84000.ufshc: ufshcd_init_clocks: core_clk clk get failed
+  0.744291 ufshcd-qcom 1d84000.ufshc: ufshcd: Initialization failed
+  0.746440 disp_cc-sm6150 af00000.clock-controller: Registered DISPCC clocks
+  0.747?85 Surya gcc: vdd-cx
+  0.747?22 Surya gcc: vdd-cx-ao
+  0.747?24 Surya gcc: vdd-mx
+  0.74758? Surya gcc: map
+  (nothing further from this probe: no "dfs", no "register", no "Registered GCC clocks")
+  4.80727  Surya bringup: provider chain stalled at /soc/ufshc@1d84000 after 4 s
+  4.84037  Surya storage snapshot: /soc/ufshc@1d84000 enabled; driver assigned
+  4.84154  Surya storage snapshot: /soc/ufsphy_mem@1d87000 enabled; unbound
+  ...      init: init first stage started!
+  ...      init: Unable to load /vendor/lib/modules, skipping module loading
+  5.9?0807 init: BlockDeviceInit: by-name devices not found in /sys, waiting for their uevent(s): metadata, super, vbmeta_system
+  36.41?32 Rebooting in 5 seconds
+
+The digits on the errno in the ``core_clk`` line are bit-rotted (``-503`` in one
+copy of the record, ``-11`` in another), which is why the three conclusions below
+come from the strings and from the source rather than from any number in this
+buffer.
+
+1. **The regulator work is done.** All three ``devm_regulator_get()`` calls came
+   back clean: ``grep -c 'Unable to get'`` over the whole boot is zero, where the
+   driver now prints the errno even for ``-EPROBE_DEFER``.  Binding
+   ``regulator-pm6150-s1``/``-s3`` (and the ``-level-ao`` children) from
+   ``surya_chain[]`` rather than hoping the serial pass reaches them is what did
+   it.  That part of the chain stays.
+2. **The stall moved one step later and is now pinned to a named block.** The
+   last marker is ``map`` and ``dfs`` never printed.  ``qcom_cc_map()`` is
+   ``devm_platform_ioremap_resource()`` plus ``devm_regmap_init_mmio()`` -- no
+   device access -- so the only MMIO between those two markers is the ten
+   ``regmap_update_bits()`` calls, and ``regmap_update_bits()`` reads before it
+   writes.  Nine of those ten are not SM6150 code at all: they are the SM8150
+   probe's "keep clocks always enabled" block (camera/disp/video ``_ahb`` and
+   ``_xo`` clks, ``gpu_cfg_ahb``, ``cpuss_gnoc``), and on this SoC the same
+   numbers name different registers -- ``0x48004`` is ``gcc_cpuss_gnoc_clk``'s
+   ``halt_reg``/``hwcg_reg``, so ``BIT(0)`` there is the halt-enable bit of the
+   CPU subsystem's own GNOC branch.  Asserting that does not fault and does not
+   return an error: the issuing CPU simply stops making forward progress, which is
+   the shape of every silent capture from 9 onward, including the ``state:R``
+   ``stack:0`` holder dump in capture 11.  The two writes the shipping 4.14 driver
+   *does* perform -- ``GCC_CAMERA_MISC`` and ``GCC_VIDEO_MISC``, the GPLL0 mask
+   for the MM blocks -- stay in place, so this is parity with the reference
+   implementation rather than a deviation from it.
+3. **UFS is not a second blocker.** ``ufshcd_init_clocks()`` propagates the
+   ``devm_clk_get()`` errno, and ``of_clk_get_hw_from_clkspec()``
+   (``drivers/clk/clk.c``) starts from ``ERR_PTR(-EPROBE_DEFER)`` and only
+   replaces it if a matching provider exists -- so a host that probes before its
+   clock provider registered gets ``-517``, "Initialization failed" and a
+   requeue, not a dead HBA.  The chain thread parking "at /soc/ufshc@1d84000" and
+   ``ufsphy_mem`` sitting at ``can_match: 0`` (its clocks are ``<&gcc 0x7c>`` and
+   ``<&gcc 0x82>``) are the same missing provider seen from the consumer side.
+   ``fw_devlink=permissive`` therefore stays for now: it is what lets the host
+   reach this line at all, and the retry arrives on its own once GCC binds.
+
+So this boot is one provider away from storage: everything the kernel has to do
+before ``/dev/disk/by-name/`` exists is now down to ``gcc_sm6150_probe()`` getting
+past its own register writes.  The next capture is self-verifying in both
+directions -- ``mapped`` then ``skip-sm8150-alwayson`` then ``dfs`` then
+``register`` then ``Registered GCC clocks`` means the block was the whole story;
+``mapped`` followed by nothing again means the mapping itself is the problem and
+the next thing to look at is ``reg = <0x100000 0x1f0000>`` on
+``/soc/clock-controller@100000`` (and its ``"syscon"`` second compatible, which
+invites a syscon driver to claim the node) rather than the clock driver; and if
+``Registered GCC clocks`` appears but ``scsi 0:0:0:0`` does not follow within the
+chain thread's window, then the host really is a second defect and its errno is
+what to read next.

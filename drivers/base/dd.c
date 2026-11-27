@@ -150,7 +150,18 @@ static void __device_set_deferred_probe_reason(const struct device *dev, char *r
  * retries and the one that defers.  Hence two changes here: the arc regulator
  * children are named in the chain so they bind in the round before GCC is
  * retried, and GCC moved to the end of the list so a parked provider can no
- * longer cost the storage pair its round.
+ *
+ * Capture 12 (console-ramoops-12.txt) then proved the children were worth
+ * binding -- "Surya gcc: vdd-cx", "vdd-cx-ao", "vdd-mx" all printed and there
+ * is no "Unable to get ... regulator" line anywhere in that boot -- and that
+ * the parking spot is one step later: the last marker is "map", so the probe
+ * stops in the eight "keep clocks always enabled" regmap_update_bits() calls
+ * that follow qcom_cc_map() -- an SM8150 block that rode along into this file,
+ * where 0x48004 is gcc_cpuss_gnoc_clk's halt bit instead.  Asserting that halt
+ * does not fault and does not return: the issuing CPU stops making forward
+ * progress inside the read the write performs first, which is what "state:R
+ * running task, stack:0" with no further output from any CPU in captures 10, 11
+ * and 12 has been all along.  See the note in drivers/clk/qcom/gcc-sm6150.c.
  */
 static bool surya_bringup;
 static char surya_attempt[96] = "idle";

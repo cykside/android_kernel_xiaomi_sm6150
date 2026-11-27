@@ -1029,6 +1029,19 @@ jobs:
           # The one-word GCC stage markers are the only thing that names where
           # gcc_sm6150_probe() stops; without them the next capture is silent
           # again and the storage stall is guesswork.
+          # The SM8150 "keep clocks always enabled" writes must stay off this
+          # board: 0x48004 is gcc_cpuss_gnoc_clk's halt bit on SM6150, and
+          # asserting it stops the CPU inside the GCC probe that every clock
+          # consumer waits for (console-ramoops-12.txt).  The two MISC writes the
+          # 4.14 driver does must stay.
+          if ! grep -q 'gcc_sm6150_stage(pdev, "skip-sm8150-alwayson")' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c"; then
+            echo '::error::Surya must skip the SM8150 GCC always-on write block in gcc_sm6150_probe()'
+            exit 1
+          fi
+          if ! grep -qE 'regmap_update_bits\(regmap, GCC_(CAMERA|VIDEO)_MISC' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c"; then
+            echo '::error::gcc_sm6150_probe() must keep the CAMERA/VIDEO MISC GPLL0 mask writes'
+            exit 1
+          fi
           if ! grep -q 'Surya gcc: ' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c"; then
             echo '::error::Surya needs the pr_notice stage markers in gcc_sm6150_probe() (see console-ramoops-11.txt)'
             exit 1
