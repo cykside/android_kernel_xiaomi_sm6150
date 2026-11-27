@@ -581,6 +581,10 @@ static int msm_config_group_set(struct pinctrl_dev *pctldev,
 			msm_writel_io(val, pctrl, g);
 			raw_spin_unlock_irqrestore(&pctrl->lock, flags);
 
+			/* Dedicated output pads have no output-enable field. */
+			if (g->fixed_output)
+				continue;
+
 			/* enable output */
 			arg = 1;
 			break;

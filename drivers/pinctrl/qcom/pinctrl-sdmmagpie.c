@@ -103,6 +103,7 @@
 		.pull_bit = 3,				\
 		.drv_bit = 0,				\
 		.oe_bit = -1,				\
+		.fixed_output = true,			\
 		.in_bit = -1,				\
 		.out_bit = 0,				\
 		.intr_enable_bit = -1,			\

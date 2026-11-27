@@ -92,6 +92,7 @@ struct msm_pingroup {
 	unsigned egpio_enable:5;
 	unsigned egpio_present:5;
 	unsigned oe_bit:5;
+	bool fixed_output;
 	unsigned in_bit:5;
 	unsigned out_bit:5;
 
