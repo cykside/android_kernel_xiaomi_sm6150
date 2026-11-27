@@ -21,12 +21,14 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm lld flex bison bc libelf-dev libssl-dev device-tree-compiler python3-libfdt
+          sudo apt-get install -y flex bison bc libelf-dev libssl-dev device-tree-compiler python3-libfdt
+      - name: Set up Violet Android Clang r487747c
+        run: bash .github/scripts/setup-surya-clang.sh
       - name: Test offline stock DT audit with synthetic inputs
         run: scripts/dtc/test-surya-stock-audit.sh
       - name: Configure Surya and verify the fragment
         run: |
-          make O=out/surya ARCH=arm64 LLVM=1 gki_defconfig vendor/surya.config
+          make O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 gki_defconfig vendor/surya.config
           missing=0
           while IFS= read -r setting; do
             case "$setting" in CONFIG_*=*) ;; *) continue ;; esac
@@ -47,7 +49,7 @@ jobs:
           test "$missing" -eq 0
       - name: Build and check the board DTB
         run: |
-          make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150.dtb vendor/qcom/violet-sm6150.dtb
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 vendor/qcom/surya-sm6150.dtb vendor/qcom/violet-sm6150.dtb
           dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
           test "$(fdtget -t s "$dtb" / compatible)" = 'xiaomi,surya qcom,sm6150'
           test "$(fdtget -t u "$dtb" / qcom,msm-id)" = '365 0'
@@ -114,7 +116,7 @@ jobs:
         run: |
           set -o pipefail
           log="$RUNNER_TEMP/surya-driver-build.log"
-          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 \
+          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 \
             drivers/soc/qcom/cmd-db.o \
             drivers/power/supply/qcom/built-in.a \
             drivers/usb/pd/built-in.a \
@@ -176,7 +178,7 @@ jobs:
           done
       - name: Compile the SM6150 display stack
         run: |
-          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 \
+          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 \
             techpack/display/built-in.a drivers/clk/qcom/dispcc-sm6150.o
       - name: Verify staged touch bus and compile GENI SPI
         run: |
@@ -187,7 +189,7 @@ jobs:
           test "$(fdtget -t s "$dtb" "$touch" status)" = disabled
           test "$(fdtget -t s "$dtb" "$touch" compatible)" = 'novatek,NVT-ts-spi'
           test "$(fdtget -t u "$dtb" "$touch" spi-max-frequency)" = 19200000
-          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 drivers/spi/spi-msm-geni.o
+          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 drivers/spi/spi-msm-geni.o
       - name: Verify staged haptic wiring
         run: |
           dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
@@ -214,7 +216,7 @@ jobs:
           test "$(fdtget -t u "$dtb" "$nfc" interrupts)" = '37 0'
           ese=$(fdtget -t u "$dtb" "$nfc" qcom,nq-esepwr)
           test "${ese#* }" = '22 0'
-          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 drivers/i2c/busses/i2c-msm-geni.o
+          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 drivers/i2c/busses/i2c-msm-geni.o
 
       - name: Verify staged SDMMagpie pinctrl states
         run: |
@@ -230,7 +232,7 @@ jobs:
 
       - name: Compile the offline SDMMagpie TLMM audit DTB
         run: |
-          make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150-tlmm-audit.dtb
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 vendor/qcom/surya-sm6150-tlmm-audit.dtb
           dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-tlmm-audit.dtb
           tlmm=/soc/pinctrl@3400000
           test "$(fdtget -t s "$dtb" "$tlmm" compatible)" = 'qcom,sdmmagpie-pinctrl'
@@ -299,7 +301,7 @@ jobs:
 
       - name: Check the Command DB integration fixture (not for flashing)
         run: |
-          make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150-cmd-db-test.dtb
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 vendor/qcom/surya-sm6150-cmd-db-test.dtb
           dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-cmd-db-test.dtb
           test "$(fdtget -t s "$dtb" /soc/command-db@c3f000c status)" = okay
           tlmm=/soc/pinctrl@3400000
@@ -337,7 +339,7 @@ jobs:
 
       - name: Check the UFS integration fixture (not for flashing)
         run: |
-          make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150-ufs-test.dtb
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 vendor/qcom/surya-sm6150-ufs-test.dtb
           dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-ufs-test.dtb
           host=/soc/ufshc@1d84000
           phy=/soc/ufsphy_mem@1d87000
@@ -364,7 +366,7 @@ jobs:
 
       - name: Build the minimal-symbol Surya overlay base (offline only)
         run: |
-          make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150-v2-test.dtb
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 vendor/qcom/surya-sm6150-v2-test.dtb
           dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-v2-test.dtb
           test "$(fdtget -p "$dtb" /__symbols__)" = soc
           test "$(fdtget -t s "$dtb" /__symbols__ soc)" = /soc
@@ -646,14 +648,16 @@ jobs:
       - name: Install kernel build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm lld flex bison bc libelf-dev libssl-dev dwarves ccache device-tree-compiler
+          sudo apt-get install -y flex bison bc libelf-dev libssl-dev dwarves ccache device-tree-compiler
+      - name: Set up Violet Android Clang r487747c
+        run: bash .github/scripts/setup-surya-clang.sh
       - uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: surya-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
           restore-keys: surya-ccache-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: Resolve the Surya configuration
-        run: make O=out/surya ARCH=arm64 LLVM=1 gki_defconfig vendor/surya.config
+        run: make O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 gki_defconfig vendor/surya.config
       - name: Compare vendor module requests against resolved Surya config
         run: |
           if grep -Eq '^CONFIG_(KSU|KERNELSU)(_[A-Z0-9_]+)?=[ym]$' out/surya/.config; then
@@ -666,6 +670,13 @@ jobs:
           grep -Fx CONFIG_REGULATOR_RPMH=y out/surya/.config
           grep -Fx CONFIG_REGULATOR_PROXY_CONSUMER=y out/surya/.config
           grep -Fx CONFIG_NVMEM_QCOM_QFPROM=y out/surya/.config
+          for config in PSTORE PSTORE_RAM PSTORE_CONSOLE PSTORE_PMSG SERIAL_CORE SERIAL_EARLYCON SERIAL_EARLYCON_RAMOOPS; do
+            grep -Fx "CONFIG_${config}=y" out/surya/.config
+          done
+          if grep -Eq '^CONFIG_(POWER_RESET_QCOM_DOWNLOAD_MODE|QCOM_FORCE_WDOG_BITE_ON_PANIC)=[ym]$' out/surya/.config; then
+            echo 'Surya pstore test requires download mode and panic watchdog bite disabled' >&2
+            exit 1
+          fi
           for config in SM_GCC_6150 QCOM_CLK_RPMH QCOM_GDSC_REGULATOR QCOM_PDC SPMI_MSM_PMIC_ARB INTERCONNECT_QCOM_SM6150 PHY_QCOM_UFS_V3 SCSI_UFS_QCOM; do
             grep -Fx "CONFIG_${config}=y" out/surya/.config
           done
@@ -696,7 +707,7 @@ jobs:
         run: |
           log="$RUNNER_TEMP/surya-kernel-build.log"
           set -o pipefail
-          if ! make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 CC="ccache clang" Image.gz 2>&1 | tee "$log"; then
+          if ! make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 CC="ccache clang" Image.gz 2>&1 | tee "$log"; then
             grep -im 12 -E 'error:|undefined (symbol|reference)|no rule to make target|killed|fatal:' "$log" \
               | while IFS= read -r line; do
                   line=${line//%/%25}
@@ -709,7 +720,7 @@ jobs:
           gzip -t out/surya/arch/arm64/boot/Image.gz
       - name: Package the Surya single-symbol test pair for inspection
         run: |
-          make -j2 O=out/surya ARCH=arm64 LLVM=1 vendor/qcom/surya-sm6150-v2-test.dtb
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 vendor/qcom/surya-sm6150-v2-test.dtb
           boot=out/surya/arch/arm64/boot
           bundle="$RUNNER_TEMP/surya-offline-pair"
           mkdir -p "$bundle"
