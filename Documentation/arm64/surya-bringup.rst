@@ -1709,3 +1709,85 @@ invites a syscon driver to claim the node) rather than the clock driver; and if
 ``Registered GCC clocks`` appears but ``scsi 0:0:0:0`` does not follow within the
 chain thread's window, then the host really is a second defect and its errno is
 what to read next.
+
+Capture 13: GCC reaches the first byte of MMIO and the CPU never comes back
+-----------------------------------------------------------------------
+
+Fix #6 moved the boundary, which is what it was for, and the new marker said
+where the boundary really is.  ``console-ramoops-13.txt`` (2026-11-28 23:36)
+is the first capture whose timestamps are mostly intact, and the GCC probe reads
+as a clean ladder:
+
+.. code-block:: none
+
+  0.353675 T1   Surya gcc: vdd-cx
+  0.353851 T1   gcc-sm6150 100000.clock-controller: Unable to get vdd_cx regulator (-517)
+  0.356437 T1   arm-smmu 50a0000.kgsl-smmu: Couldn't get clock: gcc_gpu_memnoc_gfx_clk
+  0.710871 T1   Surya bringup: armed (compatible xiaomi,surya=... qcom,sm6150=...)
+  0.728442 T65  Surya bringup: r0 /soc/rsc@18200000 -> bound
+  0.735587 T65  disp_cc-sm6150 af00000.clock-controller: Registered DISP CC clocks
+  0.736050 T65  Surya gcc: vdd-cx
+  0.736222 T65  Surya gcc: vdd-cx-ao
+  0.736342 T65  Surya gcc: vdd-mx
+  0.736551 T65  Surya gcc: map
+  0.736694 T65  Surya gcc: mapped
+  (nothing further: no "misc-skipped", no "dfs", no "Registered GCC clocks")
+  0.739752 T103 Surya bringup: r0 /soc/ufshc@1d84000 -> still deferred
+  0.849617 T103 ufshcd-qcom 1d84000.ufshc: ufshcd_init_clocks: core_clk clk get failed, -517
+  4.842074 T105 Surya storage snapshot: /soc/clock-controller@100000 enabled; driver assigned
+  14.883502 T1  Surya bringup: deferred pass still busy after 10 s, continuing init
+
+Four things are settled by this.
+
+1. **``qcom_cc_map()`` is not the problem** -- the new ``mapped`` marker printed,
+   so ``devm_platform_ioremap_resource()`` and ``devm_regmap_init_mmio()`` both
+   succeed, and the node's ``reg = <0x100000 0x1f0000>`` under a
+   ``#address-cells = <1>`` ``/soc`` with ``ranges = <0 0 0 0xffffffff>`` maps
+   exactly where it should.
+2. **The wedge is the first GCC register access the kernel ever performs.** The
+   next line after ``mapped`` is the ``if (gcc_sm6150_surya)`` marker -- and the
+   DTB does carry ``xiaomi,surya-gcc`` first in ``compatible`` (the workflow
+   asserts it), so the flag was set, the eight SM8150 writes were skipped, and
+   what still never returned is the *pair of MISC writes the 4.14 driver also
+   does*.  ``regmap_update_bits()`` reads first, and ``gcc_sm6150_regmap_config``
+   sets ``.fast_io``, so that read is unqueued and unsynchronised: a slave that
+   does not answer simply stops the CPU.
+3. **Every other symptom in the boot is the same event seen from outside.** No
+   SError, no "Unable to handle", no call trace anywhere in 63 KB; the kworker
+   that owns the probe is still inside it when init gives up; the ``-517`` on
+   ``core_clk`` and on ``gcc_gpu_memnoc_gfx_clk`` are correct answers for a
+   provider that has not reached ``devm_of_clk_add_hw_provider()``; and
+   ``SMP: failed to stop secondary CPUs 1-5`` is what ``smp_send_stop()`` prints
+   for CPUs that failed to take an IPI within one second -- CPUs stuck in a
+   device access, not sleeping on a mutex.
+4. **The 4.14 driver does not lose those clocks.** It lists exactly the blocks
+   these offsets front -- ``gcc_camera_{ahb,xo}_clk``, ``gcc_disp_{ahb,xo}_clk``,
+   ``gcc_video_{ahb,xo}_clk``, ``gcc_gpu_cfg_ahb_clk``, ``gcc_cpuss_ahb_clk``,
+   ``gcc_cpuss_gnoc_clk``, ``gcc_sys_noc_cpuss_ahb_clk`` -- as
+   ``gcc_sm6150_critical_clocks[]`` and enables them via
+   ``qcom_cc_enable_critical_clks()``; its CCF never runs the disable-unused
+   pass at all.  This tree dropped that list and kept only the SM8150 register
+   writes, so 6.1's ``clk_disable_unused()`` at late_initcall gates the AHB path
+   in front of the MISC registers a few hundred milliseconds before the deferred
+   pass walks into them.
+
+So the pair of changes is: do not touch those registers from GCC probe on this
+board (every MISC/always-on write now sits behind the flag, and
+``misc-skipped`` is the marker that proves the window was crossed), and put the
+4.14 clock state back by adding ``clk_ignore_unused`` to the command line -- in
+``/chosen`` *and* in ``tools/surya-anykernel/anykernel.sh``, because the
+effective line comes from the boot image header (capture 13 starts
+``console=ttynull stack_depot_disable=on ... bootconfig``), so a DT-only edit
+would be a knob on nothing.  ``clk_restore_critical_clocks()`` still writes the
+same offsets on resume, which stays unreachable while suspend does not exist
+here.
+
+Capture 14 reads as a three-way branch, all of them informative: ``mapped`` ->
+``misc-skipped`` -> ``dfs`` -> ``register`` -> ``Registered GCC clocks`` and then
+``scsi 0:0:0:0`` means the writes were the whole wall; ``register`` as the last
+marker means ``clk_branch2_init()``'s halt-register reads wedge too, i.e. the
+GCC register space is unreachable for a reason that has nothing to do with MISC,
+and the next thing to compare is the 4.14 node's ``reg`` size (0x30000) and its
+``syscon``/``reg-names = "cc_base"`` split; and ``Registered GCC clocks`` without
+a SCSI probe behind it moves the whole question to the UFS host and PHY, which by
+now would be the first blocker in this boot that is not a clock provider.

@@ -104,6 +104,11 @@ patch_cmdline 'msm_rtb.filter=' 'msm_rtb.filter=0x0';
 patch_cmdline 'rcupdate.rcu_expedited=1' 'rcupdate.rcu_expedited=0';
 patch_cmdline 'fw_devlink=' 'fw_devlink=permissive';
 patch_cmdline 'cpuidle.off=' 'cpuidle.off=1';
+# The 6.1 clk framework gates every bootloader-enabled clock that has no 6.1
+# consumer at late_initcall; the downstream 4.14 driver does not, and a GCC MISC
+# read on this board wedges the CPU once its AHB path is gone
+# (console-ramoops-13.txt).  Keep the bootloaders' clock state.
+patch_cmdline 'clk_ignore_unused' 'clk_ignore_unused';
 # initcall_debug is not patched on any more: one line per probe and per initcall
 # wraps the 2 MiB console ramoops prz mid-boot (capture 11 came back interleaved
 # with the next boot).  gcc_sm6150_probe() prints its own stage markers instead.

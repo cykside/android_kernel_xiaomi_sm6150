@@ -154,14 +154,17 @@ static void __device_set_deferred_probe_reason(const struct device *dev, char *r
  * Capture 12 (console-ramoops-12.txt) then proved the children were worth
  * binding -- "Surya gcc: vdd-cx", "vdd-cx-ao", "vdd-mx" all printed and there
  * is no "Unable to get ... regulator" line anywhere in that boot -- and that
- * the parking spot is one step later: the last marker is "map", so the probe
- * stops in the eight "keep clocks always enabled" regmap_update_bits() calls
- * that follow qcom_cc_map() -- an SM8150 block that rode along into this file,
- * where 0x48004 is gcc_cpuss_gnoc_clk's halt bit instead.  Asserting that halt
- * does not fault and does not return: the issuing CPU stops making forward
- * progress inside the read the write performs first, which is what "state:R
- * running task, stack:0" with no further output from any CPU in captures 10, 11
- * and 12 has been all along.  See the note in drivers/clk/qcom/gcc-sm6150.c.
+ * the parking spot is one step later, and capture 13 narrowed it to a single
+ * instruction: "mapped" printed, so qcom_cc_map() succeeds, and the marker
+ * after the register writes that follow it did not.  Those writes front the
+ * camera/video MISC and AHB clock gates that the 4.14 driver keeps alive with
+ * its critical-clk list; 6.1's clk_disable_unused() gates them at late_initcall
+ * instead, so the first read of the GCC MISC space never returns and the CPU
+ * stops there -- no fault, no sleep, no stack, which is exactly the "state:R
+ * running task, stack:0" silence of captures 10 to 12 and the reason
+ * smp_send_stop() reports "failed to stop secondary CPUs" on the way out.  See
+ * the note in drivers/clk/qcom/gcc-sm6150.c; the writes are skipped on this
+ * board and clk_ignore_unused is on the command line for the same reason.
  */
 static bool surya_bringup;
 static char surya_attempt[96] = "idle";

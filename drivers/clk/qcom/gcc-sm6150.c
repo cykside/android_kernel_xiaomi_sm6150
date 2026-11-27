@@ -3556,53 +3556,54 @@ static int gcc_sm6150_probe(struct platform_device *pdev)
 	gcc_sm6150_stage(pdev, "mapped");
 
 	/*
-	 * Disable the GPLL0 active input to the MM blocks and the GPU via the
-	 * camera and video MISC registers.  These two are what the shipping
-	 * 4.14 driver for this SoC does (gcc-sm6150.c probe: regmap_update_bits
-	 * (regmap, GCC_CAMERA_MISC, 0x1, 0x1) and the same for
-	 * GCC_VIDEO_MISC) and so they stay.
-	 */
-	regmap_update_bits(regmap, GCC_CAMERA_MISC, BIT(0), BIT(0));
-	regmap_update_bits(regmap, GCC_VIDEO_MISC, BIT(0), BIT(0));
-
-	/*
-	 * The eight writes below are the SM8150 probe's "keep clocks always
-	 * enabled" block -- camera/disp/video ahb and xo clks, gpu_cfg_ahb,
-	 * cpuss_gnoc -- riding along in this file, and they are not part of the
-	 * SM6150 bring-up in either reference: not in the 4.14 driver for this
-	 * SoC, and not in mainline either (mainline sm6150 ends with
-	 * qcom_cc_init()'s CBC list).  On SM6150 the same numbers name
-	 * different registers: 0x48004 is gcc_cpuss_gnoc_clk's halt_reg and
-	 * hwcg_reg (hwcg_bit = 1), so BIT(0) there is the halt-enable bit of
-	 * the CPU subsystem's GNOC clock, and 0x71004 is a gpu_cfg branch
-	 * control register.  Forcing halt on the GNOC branch does not return an
-	 * error and does not fault -- the CPU that issues it simply stops
-	 * making forward progress inside the regmap read that
-	 * regmap_update_bits() performs first.
+	 * None of the register writes below happen on Surya, and capture 13 is
+	 * what says so.
 	 *
-	 * That is what "Registered GCC clocks" never appearing on this board has
-	 * been.  console-ramoops-12.txt is the capture that says so: all three
-	 * rails came back clean ("Surya gcc: vdd-cx", "vdd-cx-ao", "vdd-mx", and
-	 * no "Unable to get" line anywhere -- binding the arc regulator children
-	 * from the chain did that), "Surya gcc: map" printed, and then nothing:
-	 * no "dfs", no "register", no "Registered GCC clocks", no "Rate ...
-	 * greater than highest Fmax" for any GCC RCG, while the DISPCC driver at
-	 * the other end of the same bus registered normally 1.4 ms earlier.  The
-	 * only MMIO in that window is this list, and captures 10 and 11 describe
-	 * the same stop as a *running* task with stack:0 and no sleeping state,
-	 * i.e. a CPU stuck in a device access, not a thread waiting on a
-	 * mutex -- which is also why four captures of the deferred pass showed
-	 * silence where a lockup report should have been.
+	 * The block is the SM8150 "keep clocks always enabled" list (camera /
+	 * disp / video ahb and xo clks, gpu_cfg_ahb, cpuss_gnoc) plus the two MISC
+	 * mask writes, and on SM6150 those numbers name different registers:
+	 * 0x48004 is gcc_cpuss_gnoc_clk's halt_reg/hwcg_reg, so BIT(0) there is
+	 * the halt-enable bit of the CPU subsystem's own GNOC branch.
 	 *
-	 * Skipping them costs nothing on the path to a mounted root: they only
-	 * keep camera, video, display and GPU branch clocks ungated, and this
-	 * branch has no 6.1 vendor for any of them yet.  clk_restore_critical_-
-	 * clocks() repeats these offsets on resume; that path stays untouched
-	 * because it is unreachable until this board can suspend at all.
+	 * console-ramoops-13.txt walks the probe all the way to the first byte of
+	 * MMIO now.  Every regulator came back ("vdd-cx", "vdd-cx-ao", "vdd-mx"),
+	 * "map" printed, "mapped" printed -- qcom_cc_map() succeeds, so the node's
+	 * reg = <0x100000 0x1f0000> ioremap and devm_regmap_init_mmio() are both
+	 * fine -- and then nothing: "misc-skipped" would have been the next line
+	 * and never appeared, so the wedge is in these regmap_update_bits() calls,
+	 * starting with the very first read they perform (regmap_update_bits()
+	 * reads before it writes, and regmap's read here is __raw__ and
+	 * lockless because gcc_sm6150_regmap_config sets .fast_io).
+	 *
+	 * The failure mode is a CPU that never returns, not an oops: this boot has
+	 * no SError, no "Unable to handle", no call trace anywhere in 63 KB, the
+	 * kworker (T65) that owns the probe is still inside it when init gives up
+	 * ("deferred pass still busy after 10 s, continuing init"), and the reboot
+	 * path reports "SMP: failed to stop secondary CPUs 1-5", which
+	 * smp_send_stop() only prints for CPUs that failed to take an IPI within
+	 * one second -- i.e. CPUs stuck in a device access, not sleeping on a
+	 * mutex.  Everything else in the same capture is consistent: the chain
+	 * snapshot lists clock-controller@100000 as "enabled; driver assigned"
+	 * (bound, mid-probe) and reports "core_clk clk get failed, -517" for the
+	 * UFS host, which is the correct answer for a provider that has not
+	 * reached devm_of_clk_add_hw_provider() yet.
+	 *
+	 * Skipping costs nothing on the path to a mounted root: these bits mask
+	 * GPLL0 away from the MM blocks and hold camera / video / display / GPU
+	 * branch clocks ungated, and this branch has no consumer for any of them
+	 * -- the vendor GDSC nodes were retired in commit 1cac6c5f8 for the same
+	 * reason.  Re-adding any of them needs the MM island's supplier situation
+	 * solved first, and needs to say which of the offsets is actually alive on
+	 * this board: the capture proves one of them is not, not which one.
+	 * clk_restore_critical_clocks() repeats these offsets on resume; that path
+	 * stays untouched because it is unreachable until this board can suspend.
 	 */
 	if (gcc_sm6150_surya) {
-		gcc_sm6150_stage(pdev, "skip-sm8150-alwayson");
+		gcc_sm6150_stage(pdev, "misc-skipped");
 	} else {
+		regmap_update_bits(regmap, GCC_CAMERA_MISC, BIT(0), BIT(0));
+		regmap_update_bits(regmap, GCC_VIDEO_MISC, BIT(0), BIT(0));
+
 		regmap_update_bits(regmap, 0x0b008, BIT(0), BIT(0));
 		regmap_update_bits(regmap, 0x0b044, BIT(0), BIT(0));
 		regmap_update_bits(regmap, 0x48004, BIT(0), BIT(0));

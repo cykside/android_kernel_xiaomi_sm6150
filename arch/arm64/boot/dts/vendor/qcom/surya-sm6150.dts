@@ -113,10 +113,25 @@
  * byte-interleaved, so the GCC evidence had to be reconstructed instead of
  * read.  gcc_sm6150_probe() now prints one short stage line per step of its
  * own, which is what survives a wrapped buffer, and tools/surya-anykernel no
- * longer patches the knob onto the stock cmdline.
+ *
+ * clk_ignore_unused is here because of capture 13, and it is a behaviour knob,
+ * not a logging one.  The 6.1 clock framework runs clk_disable_unused() at
+ * late_initcall and gates every clock that no driver has claimed, which the
+ * downstream 4.14 driver never does: instead of relying on the framework it
+ * lists gcc_camera_{ahb,xo}_clk, gcc_disp_{ahb,xo}_clk, gcc_video_{ahb,xo}_clk,
+ * gcc_gpu_cfg_ahb_clk, gcc_cpuss_ahb_clk, gcc_cpuss_gnoc_clk and
+ * gcc_sys_noc_cpuss_ahb_clk as "critical" and enables them itself
+ * (qcom_cc_enable_critical_clks()).  This tree lost that list and kept only the
+ * SM8150 register writes that served the same purpose on that SoC -- so by the
+ * time the deferred pass reached gcc_sm6150_probe() the AHB path in front of the
+ * GCC MISC registers was already gated, and the read that
+ * regmap_update_bits(regmap, GCC_CAMERA_MISC, ...) performs first never
+ * returned.  Ignoring the unused-clock pass reproduces the 4.14 state for every
+ * clock the bootloaders left on, which is the whole point of bring-up here; it
+ * also covers the display, camera and GPU register spaces for the same price.
  */
 &chosen {
-	bootargs = "kpti=0 ssbd=force-off qcom_dma_heaps.enable_bitstream_contig_heap=y rcupdate.rcu_expedited=0 cpufreq.default_governor=performance fw_devlink=permissive cpuidle.off=1 loglevel=8";
+	bootargs = "kpti=0 ssbd=force-off qcom_dma_heaps.enable_bitstream_contig_heap=y rcupdate.rcu_expedited=0 cpufreq.default_governor=performance fw_devlink=permissive cpuidle.off=1 loglevel=8 clk_ignore_unused";
 };
 
 /*

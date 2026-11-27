@@ -1007,7 +1007,7 @@ jobs:
             echo '::error::Surya chosen bootargs still enforce strict supplier ordering'
             exit 1
           fi
-          for knob in 'cpuidle.off=1' 'loglevel=8'; do
+          for knob in 'cpuidle.off=1' 'loglevel=8' 'clk_ignore_unused'; do
             if ! grep -q "$knob" <<< "$bootargs"; then
               echo "::error::Surya chosen bootargs lost $knob"
               exit 1
@@ -1034,8 +1034,16 @@ jobs:
           # asserting it stops the CPU inside the GCC probe that every clock
           # consumer waits for (console-ramoops-12.txt).  The two MISC writes the
           # 4.14 driver does must stay.
-          if ! grep -q 'gcc_sm6150_stage(pdev, "skip-sm8150-alwayson")' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c"; then
-            echo '::error::Surya must skip the SM8150 GCC always-on write block in gcc_sm6150_probe()'
+          if ! grep -q 'gcc_sm6150_stage(pdev, "misc-skipped")' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c"; then
+            echo '::error::Surya must skip every GCC MISC/always-on register write in gcc_sm6150_probe() (console-ramoops-13.txt)'
+            exit 1
+          fi
+          # clk_ignore_unused has to reach the *effective* cmdline, which comes
+          # from the boot image header, not from /chosen: without it the 6.1
+          # clk_disable_unused() pass gates the AHB path the 4.14 driver keeps
+          # alive through its critical-clk list.
+          if ! grep -q "patch_cmdline 'clk_ignore_unused'" "$GITHUB_WORKSPACE/tools/surya-anykernel/anykernel.sh"; then
+            echo '::error::the installer must put clk_ignore_unused on the stock cmdline'
             exit 1
           fi
           if ! grep -qE 'regmap_update_bits\(regmap, GCC_(CAMERA|VIDEO)_MISC' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c"; then
