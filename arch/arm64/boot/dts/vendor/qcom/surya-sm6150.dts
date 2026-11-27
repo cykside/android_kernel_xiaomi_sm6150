@@ -101,13 +101,14 @@
  * UFS note below).  fw_devlink=permissive keeps the ordering hints but stops
  * deferring probes on suppliers that can never report "probed", which is how a
  * device tree whose suppliers are class devices (not bound platform drivers) is
- * booted.  The rest of
- * the line is bring-up visibility: initcall_debug names the last completed
- * initcall when a CPU wedges, and loglevel=7 keeps the KERN_INFO lines
- * (probe-deferral reasons included).
+ * booted.  The rest of the line is bring-up visibility: initcall_debug names
+ * the last initcall that completed and every deferred-probe attempt boundary,
+ * and both of those print at KERN_DEBUG, so the console loglevel has to be 8 --
+ * loglevel=7 (the 2026-11-28 21:40 capture) hid the whole deferral story, and
+ * it is also why the Surya storage snapshot lines were missing from it.
  */
 &chosen {
-	bootargs = "kpti=0 ssbd=force-off qcom_dma_heaps.enable_bitstream_contig_heap=y rcupdate.rcu_expedited=0 cpufreq.default_governor=performance fw_devlink=permissive cpuidle.off=1 initcall_debug=1 loglevel=7";
+	bootargs = "kpti=0 ssbd=force-off qcom_dma_heaps.enable_bitstream_contig_heap=y rcupdate.rcu_expedited=0 cpufreq.default_governor=performance fw_devlink=permissive cpuidle.off=1 initcall_debug=1 loglevel=8";
 };
 
 /*

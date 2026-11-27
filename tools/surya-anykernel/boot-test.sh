@@ -43,7 +43,7 @@ patch_cmdline 'earlycon=' 'earlycon=ramoops,0x9da00000,0x40000';
 patch_cmdline 'reboot=' 'reboot=warm';
 patch_cmdline 'panic=' 'panic=5';
 # Keep every probe message, including the KERN_INFO deferral reasons.
-patch_cmdline 'loglevel=' 'loglevel=7';
+patch_cmdline 'loglevel=' 'loglevel=8';
 patch_cmdline 'msm_rtb.filter=' 'msm_rtb.filter=0x0';
 patch_cmdline 'rcupdate.rcu_expedited=1' 'rcupdate.rcu_expedited=0';
 # Probe-blocking and idle bring-up knobs, mirrored in the Surya DT chosen node:

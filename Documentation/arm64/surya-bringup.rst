@@ -1282,7 +1282,9 @@ appeared.
 
 ``/soc/interconnect@1700000`` "missing; no platform device" is an artefact
 of the snapshot tool, not a defect: SDMMagpie numbers that block aggre2, and
-SM6150 has no DT node at 0x1700000 at all.  The interconnect providers the
+the Surya DTB actually flashed (``surya-sm6150-v2-test.dts``, which the
+workflow copies to ``surya-base.dtb``) renames that unit address, so aggre1
+lives at ``/soc/interconnect@16e0000`` there and nothing lives at 0x1700000.  The interconnect providers the
 UFS host actually names (aggre1 at 0x16e0000, mc at 0x2, gem at 0x9680000,
 config at 0x1500000) were all bound, two of them visible in the capture as
 "driver assigned".  Likewise ``qnoc-sm6150 ... SN3/SN5 could not find RPMh
@@ -1343,3 +1345,103 @@ unbound node, every supplier phandle it holds with the supplier's own
 availability and whether that supplier has a device and a driver - the exact
 facts fw_devlink uses - so a future stall names its blocker in the log
 instead of leaving it to be inferred.
+
+The probe worker's wedge, and why init never starts
+---------------------------------------------------
+
+With the supply phandles gone and ``fw_devlink=permissive`` in force, the
+2026-11-28 21:40 capture (console-ramoops-9.txt, kernel from ``94eb89742``)
+moved the failure forward rather than sideways, which is the expected shape
+of a real fix:
+
+* ``/soc/ufshc@1d84000`` is now probed at all -- at 0.643558s, synchronously
+  from ``platform_device_add()`` on T1, ``ufshcd_populate_vreg`` reports all
+  four rails "assuming enabled" (the deleted supplies), and the probe then
+  stops one step later at ``ufshcd_init_clocks: core_clk clk get failed,
+  -517``.  ``devm_clk_get(dev, "core")`` is answered by GCC, GCC had not
+  probed yet, so the host returns ``-EPROBE_DEFER`` through
+  ``ufshcd_pltfrm_init()`` -> ``ufs_qcom_probe()`` and waits.
+* The deferred pass got to the providers on its own: ``qcom_rpmh k61rsc:
+  apps_rsc-drv-2`` at 0.801626s, the RPMh regulator parents at 0.805945s to
+  0.822061s, the qnoc providers at 0.832s, ``disp_cc-sm6150
+  af00000.clock-controller: Registered DISP CC clocks`` at 0.839582s.
+* Nothing after that.  No ``Registered GCC clocks`` line for
+  ``/soc/clock-controller@100000``, no ``Freeing unused kernel memory``, no
+  ``Run /init``, no panic, no SError, no RCU stall.  Instead the same
+  signature at 32s and 64s::
+
+      BUG: workqueue lockup - pool cpus=6 node=0 flags=0x0 nice=0 stuck for 31s!
+      ... in-flight: 65:deferred_probe_work_func BAR(1)
+
+  which says the single-threaded pass is *inside one ->probe() that has not
+  returned for 31 seconds*, sleeping (``BAR`` = uninterruptible) rather than
+  spinning, and ``drivers/base/dd.c:deferred_probe_initcall()``'s
+  ``flush_work(&deferred_probe_work)`` is what keeps T1 from finishing the
+  initcalls.
+
+So the boot is no longer blocked by binding rules at all; it is blocked by
+one driver that does not return, sitting between the UFS host and its clock
+provider in the serial retry order.  Three things are done about that, in
+``drivers/base/dd.c``, each gated on the machine being this phone (the
+compatibles ``xiaomi,surya`` / ``qcom,sm6150``) so no other board changes
+behaviour:
+
+1. A ``surya_chain`` kthread, started from ``deferred_probe_initcall()``
+   *before* it enables and triggers the serial pass, walks the storage-critical
+   provider chain in dependency order -- ``/soc/rsc@18200000``, ``drv@2``,
+   ``bcm_voter``, ``drv@2/clock-controller`` (rpmh-clk), the ARC ``cxlvl`` and
+   ``mxlvl`` regulator parents, the five ``/soc/interconnect@*`` providers,
+   ``/soc/clock-controller@100000`` (GCC), ``/soc/ufsphy_mem@1d87000``,
+   ``/soc/ufshc@1d84000`` -- and re-drives ``bus_probe_device()`` on every
+   entry that is still unbound, once per 100 ms, until a round binds nothing
+   new.  Two properties matter.  The chain does not care what order the
+   serial pass happens to visit, so a wedge elsewhere cannot strand the boot
+   device; and it retries the UFS host on the host's behalf, which ufshcd
+   itself cannot ask for because it defers through
+   ``dev_err_probe()`` and is therefore only ever retried by that same
+   wedged pass.  Because GCC's ``vdd_cx``/``vdd_cx_ao``/``vdd_mx``
+   ``devm_regulator_get()`` calls are satisfied by the ``cxlvl``/``mxlvl``
+   parents that precede it in the list, ordering is explicit rather than
+   hopeful.  If a provider in the chain is the driver that never returns,
+   only this kthread stalls.
+2. Both waits on the serial pass are bounded: the ``flush_work()`` in
+   ``deferred_probe_initcall()`` (10s, plus a 4s budget for the chain) and
+   ``wait_for_device_probe()`` (20s for the chain to settle, then 20s for the
+   pass, then it skips the ``probe_count`` wait if a probe is still in
+   flight).  ``wait_for_device_probe()`` is the call that stands between the
+   last initcall and ``run_init_process()``, and in the capture above it was
+   blocking indefinitely; one driver's bug is not allowed to be a boot
+   failure on a bring-up kernel.  Non-Surya machines keep the exact upstream
+   unbounded waits.
+3. The pass names its own culprit now.  ``surya_attempt`` records the device
+   (DT full path plus ``dev_name``) that ``deferred_probe_work_func()`` is
+   inside, and a watchdog on ``system_long_wq`` prints it every 20s for two
+   minutes and calls ``sched_show_task()`` on the worker, so the next capture
+   says which driver slept and where, instead of leaving it to be inferred
+   from the last line before the silence.  The 4s snapshot and this watchdog
+   are queued with ``queue_delayed_work_on(..., system_long_wq, ...)``, not
+   ``schedule_delayed_work()``: a wedged ``system_wq`` worker starves that
+   pool's per-CPU pool, which is exactly why the snapshot printed ten lines
+   in the previous capture and zero in this one.
+
+``loglevel`` moves from 7 to 8 for the same reason: ``initcall_debug``'s
+``calling ...``/``initcall ... returned`` lines and
+``deferred_probe_work_func``'s ``Retrying from deferred list`` are
+``KERN_DEBUG``, and without them the capture can say only that something is
+stuck, not what.  ``tools/surya-anykernel/boot-test.sh`` and
+``anykernel.sh`` patch ``loglevel=8`` on the boot image's cmdline to match, so
+the value in the DT and the value the installer forces cannot disagree.
+
+Known-and-accepted after this capture: ``/soc/power-controller@c300000``
+(``qcom,sm6150-aoss-qmp``) cannot probe, because its ``mboxes =
+<&apss_shared 0>`` names ``/soc/mailbox@17c00000``
+(``qcom,sm8150-apss-shared``, the APCS IPC block) and
+``CONFIG_QCOM_APCS_IPC is not set``, so no ``mbox_controller`` is ever
+registered for it and
+``mbox_request_channel()`` returns ``-EPROBE_DEFER`` for ever and
+``qmp_probe()`` defers with it (``qcom_aoss_qmp c300000.power-controller:
+failed to acquire ipc mailbox``).  It is *not* a UFS supplier and it does not
+gate the boot device, so the config stays as it is; the node is only added to
+the read-only snapshot list.  Enabling the APCS mailbox driver would let AOSS
+start receiving sleep votes, which is not a trade worth making while the
+first stage still has to boot.

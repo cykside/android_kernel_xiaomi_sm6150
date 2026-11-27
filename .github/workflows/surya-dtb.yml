@@ -1007,7 +1007,7 @@ jobs:
             echo '::error::Surya chosen bootargs still enforce strict supplier ordering'
             exit 1
           fi
-          for knob in 'cpuidle.off=1' 'initcall_debug=1' 'loglevel=7'; do
+          for knob in 'cpuidle.off=1' 'initcall_debug=1' 'loglevel=8'; do
             if ! grep -q "$knob" <<< "$bootargs"; then
               echo "::error::Surya chosen bootargs lost $knob"
               exit 1
@@ -1020,6 +1020,25 @@ jobs:
                        /idle-states/gold-c3 /idle-states/gold-c4; do
             test "$(fdtget -t s dtb "$state" status)" = disabled
           done
+          # The provider chain the kernel drives from a kernel thread lists its
+          # dependencies as absolute DT paths, and a mistyped one simply stops
+          # being a dependency.  Check every entry against the compiled tree and
+          # keep the SDMMagpie aggre2 block out of it for good: that address has
+          # no node on SM6150, and an earlier capture read its absence as a
+          # missing UFS supplier.
+          sed -n '/surya_chain\[\] = {/,/^};/p' drivers/base/dd.c |
+            sed -n 's/.*"\/\(.*\)".*/\/\1/p' > "$RUNNER_TEMP/surya-chain.txt"
+          test -s "$RUNNER_TEMP/surya-chain.txt"
+          while read -r node; do
+            if ! fdtget -p dtb "$node" >/dev/null 2>&1; then
+              printf '::error::Surya probe chain names a node the DTB lacks (%s)\n' "$node"
+              exit 1
+            fi
+          done < "$RUNNER_TEMP/surya-chain.txt"
+          if grep -q 'interconnect@1700000' drivers/base/dd.c; then
+            echo '::error::Surya must not chase the SDMMagpie aggre2 block at 0x1700000'
+            exit 1
+          fi
           test "$(fdtget -t s dtb "$host" reset-names)" = rst
           test "$(fdtget -t s dtb "$host" pinctrl-names)" = 'dev-reset-assert dev-reset-deassert'
           test "$(fdtget -t s dtb "$host" interconnect-names)" = 'ufs-ddr cpu-ufs'
