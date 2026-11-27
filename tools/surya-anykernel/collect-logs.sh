@@ -62,7 +62,18 @@ collect() {
   fi;
   ls -l /dev/mem >> "$dir/early-raw.txt" 2>&1;
   dmesg 2>/dev/null | grep -iE 'ramoops|pstore|persistent_ram|devmem' > "$dir/twrp-pstore-facts.txt" 2>&1;
-  dmesg > "$dir/twrp-current-dmesg.txt" 2>/dev/null;
+  # TWRP itself relocates pstore records to its recovery log store at
+  # boot and erases the mount, so an empty /sys/fs/pstore often means
+  # the records were already moved.  Collect those destinations too.
+  for moved in /cache/recovery/last_log /cache/recovery/last_log.1 \
+               /data/recovery/last_log /data/recovery/last_log.1 \
+               /log/last_log /sdcard/recovery/last_log \
+               /cache/recovery/log /cache/recovery/openrecovery.log; do
+    [ -s "$moved" ] || continue;
+    cp "$moved" "$dir/moved-$(echo "${moved#/}" | tr / _)" 2>/dev/null && count=$((count + 1));
+  done;
+  grep -aiE 'console-ramoops|pmsg-ramoops|dmesg-ramoops|ramoops' /cache/recovery/log /tmp/recovery.log /dev/null 2>/dev/null | tail -200 > "$dir/recovery-pstore-trace.txt" 2>/dev/null;
+  ls -la /cache/recovery /data/recovery >> "$dir/recovery-pstore-trace.txt" 2>&1;  dmesg > "$dir/twrp-current-dmesg.txt" 2>/dev/null;
   printf 'Previous boot files copied: %s\ntwrp-current-dmesg.txt is from recovery, not the failed kernel.\n' "$count" > "$dir/README.txt";
   sync;
   ui_print "Previous boot files copied: $count";

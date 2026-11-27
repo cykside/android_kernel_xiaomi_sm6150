@@ -156,7 +156,7 @@ static void earlycon_ramoops_write(struct console *con, const char *s,
 
 		if (readl_relaxed(&ranchor->sig) == EARLYCON_ANCHOR_SIG &&
 		    ac == (EARLYCON_ANCHOR_SIG ^ ag ^ as ^ al) &&
-		    al && al <= rbuf_size && as < rbuf_size) {
+		    al && al <= rbuf_size && as <= al) {
 			start = as;
 			size = al;
 		}
@@ -172,8 +172,14 @@ static void earlycon_ramoops_write(struct console *con, const char *s,
 		if (size < rbuf_size)
 			size++;
 	}
-	writel_relaxed(start, &rbuf->start);
+	/*
+	 * Publish size before start: 4.14-era readers treat
+	 * "cursor > length" as a torn or invalid record and zap it,
+	 * "cursor <= length" always parses.  A reset between the two
+	 * 32-bit writes must never leave start ahead of size.
+	 */
 	writel_relaxed(size, &rbuf->size);
+	writel_relaxed(start, &rbuf->start);
 	if (ecc_buf)
 		earlycon_ecc_header();
 	if (ranchor) {

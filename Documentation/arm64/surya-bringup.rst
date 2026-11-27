@@ -1191,3 +1191,21 @@ and the recovery kernel's own 4.14-era DT layout exports the ring as
 ``console-ramoops-0`` without touching our header.  The collector's
 ``dd`` uses MiB units because 32-bit recovery shells overflow on the
 raw 0x9d800000 constant.
+
+4.14 header compatibility (the actual root cause)
+--------------------------------------------------
+
+The recovery dmesg settled the long-standing empty-pstore mystery.  Its
+ramoops reports ``ecc: 0/0`` (parity is never validated by this TWRP)
+and ``found existing invalid buffer, size 52101, start 52133``: the
+openela 4.14 reader rejects any header where ``start > size`` and
+zaps it.  The earlycon updated ``start`` before ``size``, so a warm
+reset landing between those two 32-bit writes left exactly that
+torn state, and every loop iteration had its header destroyed at the
+next TWRP boot.  The writer now publishes ``size`` first, so the
+header is always in the ``start <= size`` form both reader generations
+accept; the anchor-resume guard tightened to match.  Recovery also
+relocates pstore records into ``*/recovery/last_log`` at boot and
+erases the mount, which is why ``/sys/fs/pstore`` can legitimately
+read empty even after a good record; the collector now copies those
+destinations and traces recovery logs for ramoops mentions.

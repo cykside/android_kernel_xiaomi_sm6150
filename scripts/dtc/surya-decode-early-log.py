@@ -45,9 +45,13 @@ def decode(raw):
             raise ValueError(
                 f'earlycon came up (anchor generation {generation}) but no '
                 'output was flushed before the reset')
-        if length == ecc_capacity:
+        if length == ecc_capacity and cursor < length:
             return data[cursor:length] + data[:cursor]
-        return data[:length]
+        if cursor == length:
+            return data[:length]
+        if cursor < length:
+            return data[length - cursor:length] + data[:length - cursor]
+        raise ValueError('anchor cursor beyond length')
     if signature != SIGNATURE:
         raise ValueError('earlycon signature not found')
     if not length or length > len(data) or cursor >= len(data):
@@ -55,9 +59,13 @@ def decode(raw):
     if length == ecc_capacity and cursor < length:
         return data[cursor:length] + data[:cursor]
     if length < len(data):
-        if cursor != length:
+        if cursor > length:
             raise ValueError('inconsistent cursor in partially filled ring')
-        return data[:length]
+        if cursor == length:
+            return data[:length]
+        # 4.14-era readers relocate the old prefix for cursor < length
+        # (mid-flush torn header); reproduce what recovery would show.
+        return data[length - cursor:length] + data[:length - cursor]
     return data[cursor:] + data[:cursor]
 
 
@@ -78,10 +86,11 @@ def scan(blob):
             continue
         if length == CAPACITY and cursor < length:
             yield base, data[cursor:length] + data[:cursor]
-        elif cursor in (0, length):
-            yield base, data[:length]
-        else:
-            yield base, data[length - cursor:length] + data[:length - cursor]
+        elif cursor <= length:
+            if cursor == length:
+                yield base, data[:length]
+            else:
+                yield base, data[length - cursor:length] + data[:length - cursor]
 
 
 def main():
