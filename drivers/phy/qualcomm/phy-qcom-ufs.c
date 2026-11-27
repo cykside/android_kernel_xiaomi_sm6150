@@ -284,19 +284,20 @@ skip_txrx_clk:
 	__ufs_qcom_phy_clk_get(phy_common->dev, "ref_clk_pad_en",
 				&phy_common->ref_clk_pad_en, false);
 
-	/*
-	 * Some platforms may not have the ON/OFF control for reference clock,
-	 * hence this clock may be optional.
-	 */
-	__ufs_qcom_phy_clk_get(phy_common->dev, "ref_clk",
-				   &phy_common->ref_clk, false);
+	/* Optional in the binding, but honor errors for clocks the DT supplies. */
+	phy_common->ref_clk = devm_clk_get_optional(phy_common->dev, "ref_clk");
+	if (IS_ERR(phy_common->ref_clk)) {
+		err = PTR_ERR(phy_common->ref_clk);
+		phy_common->ref_clk = NULL;
+		return dev_err_probe(phy_common->dev, err, "failed to get ref_clk\n");
+	}
 
-	/*
-	 * "ref_aux_clk" is optional and only supported by certain
-	 * phy versions, don't abort init if it's not found.
-	 */
-	 __ufs_qcom_phy_clk_get(phy_common->dev, "ref_aux_clk",
-				   &phy_common->ref_aux_clk, false);
+	phy_common->ref_aux_clk = devm_clk_get_optional(phy_common->dev, "ref_aux_clk");
+	if (IS_ERR(phy_common->ref_aux_clk)) {
+		err = PTR_ERR(phy_common->ref_aux_clk);
+		phy_common->ref_aux_clk = NULL;
+		return dev_err_probe(phy_common->dev, err, "failed to get ref_aux_clk\n");
+	}
 
 	 /*
 	  * "qref_clk_signal" is optional. It is needed for certain platforms.
