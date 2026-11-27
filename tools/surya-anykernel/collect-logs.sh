@@ -79,6 +79,24 @@ collect() {
     cp "$moved" "$dir/moved-$(echo "${moved#/}" | tr / _)" 2>/dev/null && count=$((count + 1));
     stat -c '%y %s %n' "$moved" >> "$dir/moved-stat.txt" 2>/dev/null;
   done;
+  # The chat uploader only accepts text; decompress the moved logs and
+  # additionally base64 the raw .gz as a fallback, both as .txt files.
+  self=$(dirname "$0");
+  BB="";
+  for cand in "$self/tools/busybox" /system/bin/busybox; do
+    [ -x "$cand" ] && BB="$cand" && break;
+  done;
+  unzip_to() {
+    if command -v gunzip >/dev/null 2>&1; then gunzip -c "$1" > "$2" 2>/dev/null && return 0; fi;
+    [ -n "$BB" ] && "$BB" gunzip -c "$1" > "$2" 2>/dev/null && return 0;
+    rm -f "$2"; return 1;
+  };
+  for gz in "$dir"/moved-*.gz; do
+    [ -f "$gz" ] || continue;
+    unzip_to "$gz" "${gz%.gz}.txt";
+    if command -v base64 >/dev/null 2>&1; then base64 -w 100 "$gz" > "$gz.b64.txt" 2>/dev/null;
+    elif [ -n "$BB" ]; then "$BB" base64 "$gz" > "$gz.b64.txt" 2>/dev/null; fi;
+  done;
   if [ -d /data/recovery/.twrps ]; then
     cp -r /data/recovery/.twrps "$dir/twrps" 2>/dev/null;
     for extra in "$dir"/twrps/*; do
