@@ -65,13 +65,29 @@ collect() {
   # TWRP itself relocates pstore records to its recovery log store at
   # boot and erases the mount, so an empty /sys/fs/pstore often means
   # the records were already moved.  Collect those destinations too.
-  for moved in /cache/recovery/last_log /cache/recovery/last_log.1 \
-               /data/recovery/last_log /data/recovery/last_log.1 \
+  # TWRP's own pstore move targets (files and their .gz rotations; the
+  # collector must run before recovery's next boot rotates them away).
+  for moved in /cache/recovery/last_log /cache/recovery/last_log.gz \
+               /cache/recovery/last_log.1 /cache/recovery/last_log.1.gz \
+               /cache/recovery/log.gz /data/recovery/last_log \
+               /data/recovery/last_log.gz /data/recovery/last_log.1 \
                /log/last_log /sdcard/recovery/last_log \
-               /cache/recovery/log /cache/recovery/openrecovery.log; do
+               /cache/recovery/log /cache/recovery/openrecovery.log \
+               /sdcard/console-ramoops-0 /sdcard/console-ramoops \
+               /sdcard/pmsg-ramoops-0 /sdcard/dmesg-ramoops-0; do
     [ -s "$moved" ] || continue;
     cp "$moved" "$dir/moved-$(echo "${moved#/}" | tr / _)" 2>/dev/null && count=$((count + 1));
+    stat -c '%y %s %n' "$moved" >> "$dir/moved-stat.txt" 2>/dev/null;
   done;
+  if [ -d /data/recovery/.twrps ]; then
+    cp -r /data/recovery/.twrps "$dir/twrps" 2>/dev/null;
+    for extra in "$dir"/twrps/*; do
+      [ -s "$extra" ] || continue;
+      count=$((count + 1));
+    done;
+    ls -laR /data/recovery/.twrps > "$dir/twrps-listing.txt" 2>&1;
+    stat -c '%y %s %n' /data/recovery/.twrps/* >> "$dir/moved-stat.txt" 2>/dev/null;
+  fi;
   grep -aiE 'console-ramoops|pmsg-ramoops|dmesg-ramoops|ramoops' /cache/recovery/log /tmp/recovery.log /dev/null 2>/dev/null | tail -200 > "$dir/recovery-pstore-trace.txt" 2>/dev/null;
   ls -la /cache/recovery /data/recovery >> "$dir/recovery-pstore-trace.txt" 2>&1;  dmesg > "$dir/twrp-current-dmesg.txt" 2>/dev/null;
   printf 'Previous boot files copied: %s\ntwrp-current-dmesg.txt is from recovery, not the failed kernel.\n' "$count" > "$dir/README.txt";
