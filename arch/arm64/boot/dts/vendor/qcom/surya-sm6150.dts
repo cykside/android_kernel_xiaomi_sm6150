@@ -38,6 +38,42 @@
 	};
 };
 
+/*
+ * The shared SM6150 DT instantiates the 4.14-style vendor gdsc-regulator
+ * devices under /soc, but that driver ioremaps the DT reg verbatim while
+ * these nodes carry GCC-relative offsets (0x177004 etc.) — so every probe
+ * pokes a dead window beside the GCC block.  The first complete boot log
+ * (2026-11-27, build 5f716c31f) shows the resulting asynchronous SError
+ * landing inside gdsc_probe at 0.33s: readl -> arm_serror_panic -> Kernel
+ * panic.  The upstream boot path needs none of them: the 6.1 clock driver
+ * owns GDSCs through its C tables, the UFS GDSC is left enabled by the
+ * bootloaders exactly as on the stock 4.14 firmware, and the TBU vote
+ * nodes have no 6.1 consumer.  Disable the whole family (Violet's own
+ * device trees never instantiate it with this driver).
+ */
+&emac_gdsc { status = "disabled"; };
+&pcie_0_gdsc { status = "disabled"; };
+&ufs_phy_gdsc { status = "disabled"; };
+&usb30_prim_gdsc { status = "disabled"; };
+&usb20_sec_gdsc { status = "disabled"; };
+&hlos1_vote_aggre_noc_mmu_audio_tbu_gdsc { status = "disabled"; };
+&hlos1_vote_aggre_noc_mmu_tbu1_gdsc { status = "disabled"; };
+&hlos1_vote_aggre_noc_mmu_tbu2_gdsc { status = "disabled"; };
+&hlos1_vote_aggre_noc_mmu_pcie_tbu_gdsc { status = "disabled"; };
+&hlos1_vote_mmnoc_mmu_tbu_hf0_gdsc { status = "disabled"; };
+&hlos1_vote_mmnoc_mmu_tbu_hf1_gdsc { status = "disabled"; };
+&hlos1_vote_mmnoc_mmu_tbu_sf_gdsc { status = "disabled"; };
+&bps_gdsc { status = "disabled"; };
+&ife_0_gdsc { status = "disabled"; };
+&ife_1_gdsc { status = "disabled"; };
+&ipe_0_gdsc { status = "disabled"; };
+&titan_top_gdsc { status = "disabled"; };
+&mdss_core_gdsc { status = "disabled"; };
+&gpu_cx_gdsc { status = "disabled"; };
+&gpu_gx_gdsc { status = "disabled"; };
+&vcodec0_gdsc { status = "disabled"; };
+&venus_gdsc { status = "disabled"; };
+
 /* Supply routing from 4.14 sdmmagpie-idp.dtsi; not enabled for probing. */
 &ufsphy_mem {
 	compatible = "qcom,ufs-phy-qmp-v3";
@@ -55,8 +91,6 @@
 	/delete-property/ nvmem-cells;
 	/delete-property/ nvmem-cell-names;
 	/delete-property/ boot_device_type;
-	vdd-hba-supply = <&ufs_phy_gdsc>;
-	vdd-hba-fixed-regulator;
 	vcc-supply = <&pm6150_l19>;
 	vccq2-supply = <&pm6150_l12>;
 	vcc-max-microamp = <600000>;

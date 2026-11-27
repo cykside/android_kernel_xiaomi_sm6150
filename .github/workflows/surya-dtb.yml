@@ -955,8 +955,13 @@ jobs:
             test "$(fdtget -t x dtb /reserved-memory/ramoops@9d800000 "$prop")" = "$expected"
           done
           gdsc=/soc/qcom,gdsc@177004
-          [[ "$(fdtget -t s dtb "$gdsc" status)" =~ ^(ok|okay)$ ]]
-          test "$(fdtget -t x dtb "$host" vdd-hba-supply)" = "$(fdtget -t x dtb "$gdsc" phandle)"
+          # The vendor gdsc-regulator must not probe raw-offset windows
+          # (asynchronous SError, see Documentation/arm64/surya-bringup.rst).
+          test "$(fdtget -t s dtb "$gdsc" status)" = disabled
+          if fdtget -t x dtb "$host" vdd-hba-supply >/dev/null 2>&1; then
+            echo '::error::UFS host must not reference the raw-offset GDSC regulator'
+            exit 1
+          fi
           test "$(fdtget -t s dtb "$host" reset-names)" = rst
           test "$(fdtget -t s dtb "$host" pinctrl-names)" = 'dev-reset-assert dev-reset-deassert'
           test "$(fdtget -t s dtb "$host" interconnect-names)" = 'ufs-ddr cpu-ufs'
