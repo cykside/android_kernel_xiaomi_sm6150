@@ -789,14 +789,16 @@ static int ufs_qcom_host_reset(struct ufs_hba *hba)
 	}
 
 	reenable_intr = hba->is_irq_enabled;
-	disable_irq(hba->irq);
-	hba->is_irq_enabled = false;
+	if (reenable_intr) {
+		disable_irq(hba->irq);
+		hba->is_irq_enabled = false;
+	}
 
 	ret = reset_control_assert(host->core_reset);
 	if (ret) {
 		dev_err(hba->dev, "%s: core_reset assert failed, err = %d\n",
 				 __func__, ret);
-		goto out;
+		goto out_restore_irq;
 	}
 
 	/*
@@ -820,6 +822,7 @@ static int ufs_qcom_host_reset(struct ufs_hba *hba)
 	 */
 	ufs_qcom_ice_disable(host);
 
+out_restore_irq:
 	if (reenable_intr) {
 		enable_irq(hba->irq);
 		hba->is_irq_enabled = true;
