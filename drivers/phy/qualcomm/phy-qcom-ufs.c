@@ -166,6 +166,7 @@ struct phy *ufs_qcom_phy_generic_probe(struct platform_device *pdev,
 	if (IS_ERR(phy_provider)) {
 		err = PTR_ERR(phy_provider);
 		dev_err(dev, "%s: failed to register phy %d\n", __func__, err);
+		generic_phy = NULL;
 		goto out;
 	}
 
