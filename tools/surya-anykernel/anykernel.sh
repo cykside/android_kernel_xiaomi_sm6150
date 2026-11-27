@@ -104,7 +104,9 @@ patch_cmdline 'msm_rtb.filter=' 'msm_rtb.filter=0x0';
 patch_cmdline 'rcupdate.rcu_expedited=1' 'rcupdate.rcu_expedited=0';
 patch_cmdline 'fw_devlink=' 'fw_devlink=permissive';
 patch_cmdline 'cpuidle.off=' 'cpuidle.off=1';
-patch_cmdline 'initcall_debug' 'initcall_debug=1';
+# initcall_debug is not patched on any more: one line per probe and per initcall
+# wraps the 2 MiB console ramoops prz mid-boot (capture 11 came back interleaved
+# with the next boot).  gcc_sm6150_probe() prints its own stage markers instead.
 flash_boot;
 surya_pmsg_probe;
 ui_print 'Diagnostic complete. No partitions were written.';

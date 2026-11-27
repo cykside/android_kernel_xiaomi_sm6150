@@ -3480,34 +3480,65 @@ static void gcc_sm6150_fixup_surya_ufs(void)
 	gcc_ufs_phy_phy_aux_clk_src.cmd_rcgr = 0x77098;
 }
 
+/*
+ * Surya bring-up: this probe is the single gate in front of
+ * /soc/ufshc@1d84000, and therefore in front of metadata, super and
+ * vbmeta_system, and three captures have been lost to the fact that none of
+ * its early failures is printed.  devm_regulator_get() answers
+ * -EPROBE_DEFER, the vendor code suppresses the message for exactly that
+ * errno, and the deferred pass restarts the probe in silence:
+ * console-ramoops-10.txt and console-ramoops-11.txt both end the same way --
+ * "r0 probing /soc/clock-controller@100000" with no result line, no
+ * "Registered GCC clocks", not even the "Rate ... greater than highest Fmax"
+ * errors that clock registration produces for dispcc in the same window.
+ * So on this machine only, name every step and never hide the errno.  The
+ * stage names are one short line each because the 2026-11-28 22:0x capture
+ * showed what a wrapped pstore console buffer does to a stack trace.
+ */
+static bool gcc_sm6150_surya;
+
+static void gcc_sm6150_stage(struct platform_device *pdev, const char *stage)
+{
+	if (gcc_sm6150_surya)
+		pr_notice("Surya gcc: %s\n", stage);
+}
+
+static struct regulator *gcc_sm6150_get_vdd(struct platform_device *pdev,
+					   const char *name)
+{
+	struct regulator *r = devm_regulator_get(&pdev->dev, name);
+
+	if (IS_ERR(r) && (gcc_sm6150_surya || PTR_ERR(r) != -EPROBE_DEFER))
+		dev_err(&pdev->dev, "Unable to get %s regulator (%ld)\n",
+			name, PTR_ERR(r));
+
+	return r;
+}
+
+
 static int gcc_sm6150_probe(struct platform_device *pdev)
 {
 	struct regmap *regmap;
 	int ret, is_sa6155;
 
-	vdd_cx.regulator[0] = devm_regulator_get(&pdev->dev, "vdd_cx");
-	if (IS_ERR(vdd_cx.regulator[0])) {
-		if (!(PTR_ERR(vdd_cx.regulator[0]) == -EPROBE_DEFER))
-			dev_err(&pdev->dev,
-				"Unable to get vdd_cx regulator\n");
+	gcc_sm6150_surya = of_device_is_compatible(pdev->dev.of_node,
+						   "xiaomi,surya-gcc");
+
+	gcc_sm6150_stage(pdev, "vdd-cx");
+	vdd_cx.regulator[0] = gcc_sm6150_get_vdd(pdev, "vdd_cx");
+	if (IS_ERR(vdd_cx.regulator[0]))
 		return PTR_ERR(vdd_cx.regulator[0]);
-	}
 
-	vdd_cx_ao.regulator[0] = devm_regulator_get(&pdev->dev, "vdd_cx_ao");
-	if (IS_ERR(vdd_cx_ao.regulator[0])) {
-		if (!(PTR_ERR(vdd_cx_ao.regulator[0]) == -EPROBE_DEFER))
-			dev_err(&pdev->dev,
-				"Unable to get vdd_cx_ao regulator\n");
+	gcc_sm6150_stage(pdev, "vdd-cx-ao");
+	vdd_cx_ao.regulator[0] = gcc_sm6150_get_vdd(pdev, "vdd_cx_ao");
+	if (IS_ERR(vdd_cx_ao.regulator[0]))
 		return PTR_ERR(vdd_cx_ao.regulator[0]);
-	}
 
-	vdd_mx.regulator[0] = devm_regulator_get(&pdev->dev, "vdd_mx");
-	if (IS_ERR(vdd_mx.regulator[0])) {
-		if (!(PTR_ERR(vdd_mx.regulator[0]) == -EPROBE_DEFER))
-			dev_err(&pdev->dev,
-				"Unable to get vdd_cx_ao regulator\n");
+	gcc_sm6150_stage(pdev, "vdd-mx");
+	vdd_mx.regulator[0] = gcc_sm6150_get_vdd(pdev, "vdd_mx");
+	if (IS_ERR(vdd_mx.regulator[0]))
 		return PTR_ERR(vdd_mx.regulator[0]);
-	}
+
 
 	is_sa6155 = of_device_is_compatible(pdev->dev.of_node,
 						"qcom,sa6155-gcc");
@@ -3516,6 +3547,7 @@ static int gcc_sm6150_probe(struct platform_device *pdev)
 	else if (of_device_is_compatible(pdev->dev.of_node, "xiaomi,surya-gcc"))
 		gcc_sm6150_fixup_surya_ufs();
 
+	gcc_sm6150_stage(pdev, "map");
 	regmap = qcom_cc_map(pdev, &gcc_sm6150_desc);
 	if (IS_ERR(regmap)) {
 		pr_err("Failed to map the gcc registers\n");
@@ -3549,17 +3581,20 @@ static int gcc_sm6150_probe(struct platform_device *pdev)
 	regmap_update_bits(regmap, 0x0b004, BIT(0), BIT(0));
 	regmap_update_bits(regmap, 0x0b040, BIT(0), BIT(0));
 
+	gcc_sm6150_stage(pdev, "dfs");
 	ret = qcom_cc_register_rcg_dfs(regmap, gcc_dfs_clocks,
 				       ARRAY_SIZE(gcc_dfs_clocks));
 	if (ret)
 		return ret;
 
+	gcc_sm6150_stage(pdev, "register");
 	ret = qcom_cc_really_probe(pdev, &gcc_sm6150_desc, regmap);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to register GCC clocks\n");
 		return ret;
 	}
 
+	gcc_sm6150_stage(pdev, "pm-ops");
 	ret = register_qcom_clks_pm(pdev, false, &gcc_sm6150_desc);
 	if (ret)
 		dev_err(&pdev->dev, "GCC failed to register for pm ops\n");

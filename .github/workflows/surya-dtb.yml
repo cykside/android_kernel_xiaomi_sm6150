@@ -1007,12 +1007,32 @@ jobs:
             echo '::error::Surya chosen bootargs still enforce strict supplier ordering'
             exit 1
           fi
-          for knob in 'cpuidle.off=1' 'initcall_debug=1' 'loglevel=8'; do
+          for knob in 'cpuidle.off=1' 'loglevel=8'; do
             if ! grep -q "$knob" <<< "$bootargs"; then
               echo "::error::Surya chosen bootargs lost $knob"
               exit 1
             fi
           done
+          # initcall_debug floods ~1500 lines into a 2 MiB console prz, and the
+          # 2026-11-28 22:2x capture came back with this boot and the next one
+          # byte-interleaved because of it.  The gcc_sm6150_probe() stage
+          # markers below replace it, so a regression here costs the diagnosis.
+          if grep -q 'initcall_debug' <<< "$bootargs"; then
+            echo '::error::Surya bootargs must not enable initcall_debug: the console prz wraps and the capture is unreadable'
+            exit 1
+          fi
+          if grep -q "patch_cmdline 'initcall_debug'" anykernel.sh \
+               "$GITHUB_WORKSPACE/tools/surya-anykernel/anykernel.sh"; then
+            echo '::error::Surya installer must not patch initcall_debug onto the stock cmdline'
+            exit 1
+          fi
+          # The one-word GCC stage markers are the only thing that names where
+          # gcc_sm6150_probe() stops; without them the next capture is silent
+          # again and the storage stall is guesswork.
+          if ! grep -q 'Surya gcc: ' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c"; then
+            echo '::error::Surya needs the pr_notice stage markers in gcc_sm6150_probe() (see console-ramoops-11.txt)'
+            exit 1
+          fi
           # Only WFI may be offered to the scheduler: the downstream PSCI
           # implementation rejects the OSI-mode switch, so the vendor
           # power-down states wedge CPUs (CPU#7 in the 2026-11-27 capture).
@@ -1030,7 +1050,7 @@ jobs:
           test -s "$dd_c"
           sed -n '/surya_chain\[\] = {/,/^};/p' "$dd_c" |
             sed -n 's/.*"\/\(.*\)".*/\/\1/p' > "$RUNNER_TEMP/surya-chain.txt"
-          test "$(wc -l < "$RUNNER_TEMP/surya-chain.txt")" -ge 13
+          test "$(wc -l < "$RUNNER_TEMP/surya-chain.txt")" -ge 18
           while read -r node; do
             if ! fdtget -p dtb "$node" >/dev/null 2>&1; then
               printf '::error::Surya probe chain names a node the DTB lacks (%s)\n' "$node"

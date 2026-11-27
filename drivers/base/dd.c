@@ -124,10 +124,33 @@ static void __device_set_deferred_probe_reason(const struct device *dev, char *r
  * chain printed "r0 probing /soc/clock-controller@100000" at 1.257457s and
  * never printed the result, and the pass was still queueing on that device
  * mutex at 21.475s.  So gcc_sm6150_probe() sleeps with the device lock held,
- * which is a device-tree problem (its mandatory vdd_cx_ao rail, see
- * arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dts), not a driver-core one;
- * the chain stays as-is because it is what makes first stage reachable while
- * individual providers get fixed.
+ * which was blamed on its mandatory vdd_cx_ao rail (see
+ * arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dts).
+ *
+ * That diagnosis was half right and the fix was not enough.  With the AO edge
+ * retargeted -- asserted on the flashed DTB, and captured 11 shows all three
+ * GCC supplies resolving to .../rpmh-regulator-cxlvl/regulator-pm6150-s1 and
+ * .../rpmh-regulator-mxlvl/regulator-pm6150-s3 -- console-ramoops-11.txt is
+ * still silent about GCC: "r0 probing /soc/clock-controller@100000" at
+ * 1.202755s, no result line, no "Registered GCC clocks" in the whole 0.08s to
+ * 21.49s the buffer still holds, and the watchdog's new holder dump printed
+ * "task:surya_chain_... state:R" instead of a sleeping stack.  The rest of
+ * that capture says what GCC is waiting for, though: /soc/ufshc@1d84000 had
+ * already been probed at 0.893865s and stopped at "ufshcd_init_clocks:
+ * core_clk clk get failed, -517", and /soc/ufsphy_mem@1d87000 sat at
+ * "can_match: 0" because its clocks are <&gcc 0x7c> and <&gcc 0x82>.  Every
+ * consumer of GCC defers; GCC itself defers on
+ * devm_regulator_get("vdd_cx"|"vdd_cx_ao"|"vdd_mx"), because the *class*
+ * devices behind those three phandles are the regulator children of
+ * rpmh-regulator-cxlvl/mxlvl, which the chain binds only at the parent level.
+ * A parent binding is not enough: rpmh-regulator creates its children with
+ * devm_regulator_register()/of_platform_populate() while
+ * driver_deferred_probe_enable is still false, so the children land on the
+ * deferred list -- behind GCC, which is the first entry the serial pass
+ * retries and the one that defers.  Hence two changes here: the arc regulator
+ * children are named in the chain so they bind in the round before GCC is
+ * retried, and GCC moved to the end of the list so a parked provider can no
+ * longer cost the storage pair its round.
  */
 static bool surya_bringup;
 static char surya_attempt[96] = "idle";
@@ -678,15 +701,27 @@ static const char * const surya_chain[] = {
 	"/soc/rsc@18200000/drv@2/bcm_voter",
 	"/soc/rsc@18200000/drv@2/clock-controller",
 	"/soc/rsc@18200000/drv@2/rpmh-regulator-cxlvl",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-cxlvl/regulator-pm6150-s1",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-cxlvl/regulator-pm6150-s1-level-ao",
 	"/soc/rsc@18200000/drv@2/rpmh-regulator-mxlvl",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-mxlvl/regulator-pm6150-s3",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-mxlvl/regulator-pm6150-s3-level-ao",
 	"/soc/interconnect@2",
 	"/soc/interconnect@9680000",
 	"/soc/interconnect@1500000",
 	"/soc/interconnect@1620000",
 	"/soc/interconnect@16e0000",
-	"/soc/clock-controller@100000",
 	"/soc/ufsphy_mem@1d87000",
 	"/soc/ufshc@1d84000",
+	/*
+	 * GCC last, not eleventh: console-ramoops-11.txt caught the round
+	 * parking on the clock controller and never reaching the storage pair
+	 * behind it, so a provider that parks must at least be the last thing
+	 * the round loses.  The workflow below (surya-dtb.yml) extracts every
+	 * quoted path from this list and checks it against the flashed DTB,
+	 * so keep prose here free of absolute node paths.
+	 */
+	"/soc/clock-controller@100000",
 };
 
 static DECLARE_COMPLETION(surya_chain_done);

@@ -1529,3 +1529,104 @@ is the reason the phy stays unbound: once GCC registers, the host binds, the
 phy's ``resets`` supplier gains a driver and the next deferred pass takes both
 -- no extra retry is needed for the cycle, which is what the
 "Fixed dependency cycle(s)" notices have been saying about this pair all along.
+
+Capture 11: the AO retarget landed, GCC still parks, and the arc children are
+the reason
+=============================================================================
+
+``console-ramoops-11.txt`` (2026-11-28, kernel built at ``f628f6eda``) is the
+first capture in which Android's first stage survives long enough to complain
+about something else::
+
+    1.198055 Surya bringup: r0 /soc/rsc@18200000 -> bound
+    1.176646 probe of 18200000.rsc:drv@2:rpmh-regulator-cxlvl returned 0 after 866 usecs
+    1.174171 probe of 18200000.rsc:drv@2:rpmh-regulator-mxlvl returned 0 after 578 usecs
+    1.210651 disp_cc-sm6150 af00000.clock-controller: Registered DISPCC clocks
+    1.210?   probe of af00000.clock-controller returned 0 after 6?7? usecs
+    1.202755 Surya bringup: r0 probing /soc/clock-controller@100000
+    5.347387 Surya bringup: provider chain stalled at /soc/clock-controller@100000 after 4 s
+    21.481918 Surya storage snapshot: /soc/clock-controller@100000 enabled; driver assigned
+    21.484791 Surya bringup: provider chain blocked in /soc/clock-controller@100000
+    21.484841 task:surya_chain_... state:R running task stack:0 pid:8?6
+    25.490774 Surya bringup: second deferred pass still busy, continuing init
+    25.492?   initcall deferred_probe_initcall+0x0/0x68 returned 0 after 2431227 usecs
+    0.893865 ufshcd-qcom 1d84000.ufshc: ufshcd_init_clocks: core_clk clk get failed, -517
+    0.894902 ufshcd-qcom 1d84000.ufshc: ufshcd: Initialization failed
+    5.607830 init: Wait for partitions returned after 1000ms
+
+Three facts, in order of importance.
+
+1. **The device-tree fix landed.** Decoding the flashed base DTB
+   (``surya-sm6150-v2-test.dtb``, which is what ``surya-base.dtb`` is copied
+   from) shows ``compatible = "xiaomi,surya-gcc", "qcom,sm6150-gcc",
+   "syscon"`` with ``vdd_cx-supply = <0x25>``, ``vdd_cx_ao-supply = <0x25>``
+   and ``vdd_mx-supply = <0x26>``: the MX AO arc child is gone from the CX AO
+   class, and the workflow gate on that equality is what proved it before the
+   flash.
+2. **And it was not sufficient.** ``Registered GCC clocks`` never appears, so
+   the previous section's conclusion -- that the AO edge was *the* sleep --
+   was wrong about sufficiency, and its other prediction ("no extra retry is
+   needed for the phy cycle") was also premature: ``/soc/ufsphy_mem@1d87000``
+   is ``enabled; unbound``, ``can_match: 0`` at 21.48 s, and its
+   ``clocks = <&gcc 0x7c>, <&gcc 0x82>`` mean it cannot bind before GCC
+   registers anything.  Every consumer of GCC defers; only GCC itself has to
+   be explained.
+3. **The holder is not sleeping.** The new holder dump printed ``state:R
+   running task``, i.e. at the sampling instant the chain thread was runnable,
+   not parked in ``__mutex_lock`` like capture 10's deferred worker.  That is
+   the signature of a probe that *returns* ``-EPROBE_DEFER`` immediately, over
+   and over, with nothing printed -- which is exactly what the vendor code
+   does, because each of the three gets is guarded by
+   ``if (!(PTR_ERR(...) == -EPROBE_DEFER)) dev_err(...)``.
+
+What GCC defers on is one level deeper than the phandle.  ``devm_regulator_get
+("vdd_cx")`` is only answered once the *regulator class device* exists, and
+those live one level below the nodes the chain names: ``VDD_CX_LEVEL`` is
+``/soc/rsc@18200000/drv@2/rpmh-regulator-cxlvl/regulator-pm6150-s1``, not the
+``rpmh-regulator-cxlvl`` parent whose probe the log shows returning 0 at
+1.176646 s.  ``rpmh-regulator`` creates those children with
+``of_platform_populate()`` during its own probe, which at that point in boot
+still has ``driver_deferred_probe_enable == false``, so every child lands on
+the deferred list instead of binding -- behind ``/soc/clock-controller@100000``,
+which is the entry the serial pass retries and the entry that defers.  Binding
+a parent is therefore not enough for a consumer that needs the child: the
+children are named in ``surya_chain[]`` now::
+
+    "/soc/rsc@18200000/drv@2/rpmh-regulator-cxlvl",
+    "/soc/rsc@18200000/drv@2/rpmh-regulator-cxlvl/regulator-pm6150-s1",
+    "/soc/rsc@18200000/drv@2/rpmh-regulator-cxlvl/regulator-pm6150-s1-level-ao",
+    "/soc/rsc@18200000/drv@2/rpmh-regulator-mxlvl",
+    "/soc/rsc@18200000/drv@2/rpmh-regulator-mxlvl/regulator-pm6150-s3",
+    "/soc/rsc@18200000/drv@2/rpmh-regulator-mxlvl/regulator-pm6150-s3-level-ao",
+
+and the storage pair moved ahead of GCC in the list, so a provider that parks
+can no longer cost the round the two devices that were queued behind it.
+Nothing else in ``gcc_sm6150_probe()`` can sleep: ``qcom_cc_register_rcg_dfs()``
+is ``regmap_read()`` plus flags, ``register_qcom_clks_pm(.., false, ..)`` only
+installs ``clock_pm_ops``, and ``gcc_sm6150_desc.num_clk_regulators`` is 0, so
+``clk_regulator_init()`` and ``clk_vdd_proxy_vote()`` loop zero times (the
+per-clock ``.vdd_data`` is not consulted by ``clk-rcg2.c`` at all, and
+``qcom_cc_runtime_resume()`` -- the only ``clk_vote_vdd_level()`` caller -- is
+unreachable without ``runtime = true``).  The rails keep their semantics: this
+changes which *device* answers the get, not what any consumer votes.
+
+The silence is what cost two captures, so the probe now refuses to be quiet on
+this board: ``gcc_sm6150_surya`` is set from the ``xiaomi,surya-gcc``
+compatible, ``gcc_sm6150_stage()`` prints ``Surya gcc: vdd-cx``,
+``vdd-cx-ao``, ``vdd-mx``, ``map``, ``dfs``, ``register``, ``pm-ops``, and
+``gcc_sm6150_get_vdd()`` prints the errno even for ``-EPROBE_DEFER``.  Only
+the marker for the *last* step reached matters, and one short line is what a
+wrapped console buffer survives -- which capture 11 is itself the lesson for:
+``initcall_debug=1`` costs a line per initcall and per probe attempt, the 2 MiB
+console prz wraps around 1500 lines, and the file came back with boot 11 and
+boot 12 byte-interleaved.  The knob is therefore off (``&chosen`` bootargs and
+both AnyKernel scripts), the workflow now fails if it returns or if the GCC
+markers disappear, and the next capture should reach ``Run /init`` and the
+panic line intact.
+
+What capture 12 has to show, in this order: ``Surya gcc: vdd-cx`` through
+``Surya gcc: pm-ops``, ``gcc-sm6150 100000.clock-controller: Registered GCC
+clocks``, ``scsi 0:0:0:0: ...`` / ``sda``, ``/dev/disk/by-name/`` populating
+and first stage mounting ``super``.  If a ``Surya gcc:`` marker is the last
+line of the boot, the stage after it is the blocker, by name rather than by
+inference.

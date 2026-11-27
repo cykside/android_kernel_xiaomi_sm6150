@@ -101,14 +101,22 @@
  * UFS note below).  fw_devlink=permissive keeps the ordering hints but stops
  * deferring probes on suppliers that can never report "probed", which is how a
  * device tree whose suppliers are class devices (not bound platform drivers) is
- * booted.  The rest of the line is bring-up visibility: initcall_debug names
- * the last initcall that completed and every deferred-probe attempt boundary,
- * and both of those print at KERN_DEBUG, so the console loglevel has to be 8 --
- * loglevel=7 (the 2026-11-28 21:40 capture) hid the whole deferral story, and
- * it is also why the Surya storage snapshot lines were missing from it.
+ * booted.  loglevel=8 stays because the Surya bring-up markers print at
+ * KERN_DEBUG/KERN_NOTICE: at loglevel=7 (the 2026-11-28 21:40 capture) the
+ * whole deferral story and the storage snapshot lines were invisible.
+ *
+ * initcall_debug=1 is dropped as of capture 11.  It is what the last four
+ * captures were mined for -- its "probe of af00000.clock-controller returned 0
+ * after 6822 usecs" is how dispcc became the control case for GCC -- but one
+ * line per initcall and per probe attempt is ~1500 lines, and the 2 MiB
+ * console prz then wraps mid-boot: capture 11 came back with two boots
+ * byte-interleaved, so the GCC evidence had to be reconstructed instead of
+ * read.  gcc_sm6150_probe() now prints one short stage line per step of its
+ * own, which is what survives a wrapped buffer, and tools/surya-anykernel no
+ * longer patches the knob onto the stock cmdline.
  */
 &chosen {
-	bootargs = "kpti=0 ssbd=force-off qcom_dma_heaps.enable_bitstream_contig_heap=y rcupdate.rcu_expedited=0 cpufreq.default_governor=performance fw_devlink=permissive cpuidle.off=1 initcall_debug=1 loglevel=8";
+	bootargs = "kpti=0 ssbd=force-off qcom_dma_heaps.enable_bitstream_contig_heap=y rcupdate.rcu_expedited=0 cpufreq.default_governor=performance fw_devlink=permissive cpuidle.off=1 loglevel=8";
 };
 
 /*
@@ -146,6 +154,16 @@
  * GCC asks for a vdd_cx_ao rail.  dispcc asks for vdd_cx only and its probe
  * returned in 6822 usecs in the same window -- that is the control case: same
  * regulator class, same ARC parent, one supply less, no stall.
+ *
+ * Capture 11 (2026-11-28) says this was necessary and not sufficient: the
+ * property is in the flashed DTB, all three supplies now resolve, and
+ * gcc_sm6150_probe() still never returns.  What it is still waiting on is
+ * that the regulator *devices* behind these phandles are children of
+ * rpmh-regulator-cxlvl/mxlvl and get bound only by the serial deferred pass,
+ * which is the pass GCC blocks -- see drivers/base/dd.c, where the chain now
+ * names those children explicitly.  This retarget stays because it removes an
+ * edge (CX AO to the MX AO arc child) that no other consumer in the tree
+ * resolves and that the AO vote does not need on a board that cannot idle.
  *
  * So the AO edge goes away for this board: vote the CX always-on class through
  * the same resolvable pm6150_s1_level regulator the non-AO class uses.  For a

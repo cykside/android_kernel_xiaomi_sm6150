@@ -49,11 +49,12 @@ patch_cmdline 'rcupdate.rcu_expedited=1' 'rcupdate.rcu_expedited=0';
 # Probe-blocking and idle bring-up knobs, mirrored in the Surya DT chosen node:
 # fw_devlink=permissive stops consumers (UFS first) from waiting on suppliers
 # that can never report probed, cpuidle.off=1 keeps every CPU out of the PSCI
-# idle path this firmware rejects, initcall_debug records the last initcall
-# before a wedged CPU.
+# idle path this firmware rejects.
 patch_cmdline 'fw_devlink=' 'fw_devlink=permissive';
 patch_cmdline 'cpuidle.off=' 'cpuidle.off=1';
-patch_cmdline 'initcall_debug' 'initcall_debug=1';
+# initcall_debug is not patched on any more: one line per probe and per initcall
+# wraps the 2 MiB console ramoops prz mid-boot (capture 11 came back interleaved
+# with the next boot).  gcc_sm6150_probe() prints its own stage markers instead.
 grep -Eq '^cmdline=.*earlycon=ramoops,0x9da00000,0x40000( |$)' "$SPLITIMG/header" ||
   abort 'Log argument missing; nothing written.';
 flash_boot;
