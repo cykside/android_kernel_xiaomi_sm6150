@@ -74,7 +74,9 @@ collect() {
                /log/last_log /sdcard/recovery/last_log \
                /cache/recovery/log /cache/recovery/openrecovery.log \
                /sdcard/console-ramoops-0 /sdcard/console-ramoops \
-               /sdcard/pmsg-ramoops-0 /sdcard/dmesg-ramoops-0; do
+               /sdcard/pmsg-ramoops-0 /sdcard/dmesg-ramoops-0 \
+               /sdcard/dmesg-ramoops-1 /sdcard/dmesg-ramoops-2 \
+               /sdcard/console-ramoops-1; do
     [ -s "$moved" ] || continue;
     cp "$moved" "$dir/moved-$(echo "${moved#/}" | tr / _)" 2>/dev/null && count=$((count + 1));
     stat -c '%y %s %n' "$moved" >> "$dir/moved-stat.txt" 2>/dev/null;
