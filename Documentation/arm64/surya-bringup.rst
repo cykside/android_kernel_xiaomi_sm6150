@@ -1177,3 +1177,17 @@ records survive into a recovery mount.  The earlycon therefore targets
 parity land exactly where the 4.14 reader computes them
 (``0x9d9e38f0`` and ``0x9d9ffff0``), and the driver resumes its ring
 from the anchor when its own ramoops probe zaps the header mid-boot.
+
+Ownership handover (final)
+--------------------------
+
+Official recovery exposes no usable ``/dev/mem`` (the node does not even
+exist; after ``mknod`` the kernel still refuses reads), so raw window
+capture is dead there.  The test kernel therefore declares every ramoops
+prz size as zero: the 6.1 ramoops driver then fails to bind at all and
+cannot zap or re-ECC the ring.  The earlycon is the only writer for the
+whole boot (it is also the only console, so panics flow into the ring),
+and the recovery kernel's own 4.14-era DT layout exports the ring as
+``console-ramoops-0`` without touching our header.  The collector's
+``dd`` uses MiB units because 32-bit recovery shells overflow on the
+raw 0x9d800000 constant.

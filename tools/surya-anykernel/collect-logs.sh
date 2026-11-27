@@ -44,11 +44,13 @@ collect() {
     [ -r "$memnode" ] || memnode="$dir/mem";
   fi;
   if [ -r "$memnode" ]; then
-    if dd if="$memnode" of="$dir/ramoops-region.raw" bs=4096 \
-         skip=$((0x9d800000 / 4096)) count=$((0x400000 / 4096)) 2>/dev/null &&
+    # 32-bit recovery shells overflow on the 0x9d800000 constant; work
+    # in MiB units so every intermediate stays small.
+    if dd if="$memnode" of="$dir/ramoops-region.raw" bs=1048576 \
+         skip=$((0x9d8)) count=4 2>"$dir/early-raw.txt" &&
        [ -s "$dir/ramoops-region.raw" ]; then
       count=$((count + 1));
-      printf 'raw ramoops region 0x9d800000+0x400000 captured\n' > "$dir/early-raw.txt";
+      printf 'raw ramoops region 0x9d800000+0x400000 captured\n' >> "$dir/early-raw.txt";
     else
       rm -f "$dir/ramoops-region.raw";
       printf 'dd from %s failed\n' "$memnode" > "$dir/early-raw.txt";

@@ -65,9 +65,12 @@ jobs:
           fi
           pstore=/reserved-memory/ramoops@9d800000
           test "$(fdtget -t x "$dtb" "$pstore" reg)" = '0 9d800000 0 400000'
-          test "$(fdtget -t x "$dtb" "$pstore" record-size)" = '80000'
-          test "$(fdtget -t x "$dtb" "$pstore" pmsg-size)" = '200000'
-          test "$(fdtget -t x "$dtb" "$pstore" console-size)" = '100000'
+          # The test kernel hands over management of the region to the
+          # earlycon; every prz size must stay zero or the driver would
+          # zap the ring on probe.
+          test "$(fdtget -t x "$dtb" "$pstore" record-size)" = '0'
+          test "$(fdtget -t x "$dtb" "$pstore" pmsg-size)" = '0'
+          test "$(fdtget -t x "$dtb" "$pstore" console-size)" = '0'
           for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000 \
                       /soc/ssusb@a600000 /soc/hsusb@a800000; do
             test "$(fdtget -t s "$dtb" "$node" status)" = disabled
@@ -947,7 +950,7 @@ jobs:
           ramoops_properties=$(fdtget -p dtb /reserved-memory/ramoops@9d800000)
           grep -qx no-map <<< "$ramoops_properties"
           # The earlycon ECC layout must match the existing Surya recovery reader.
-          for spec in 'record-size 80000' 'console-size 100000' 'pmsg-size 200000' 'ecc-size 10'; do
+          for spec in 'record-size 0' 'console-size 0' 'pmsg-size 0' 'ecc-size 10'; do
             read -r prop expected <<< "$spec"
             test "$(fdtget -t x dtb /reserved-memory/ramoops@9d800000 "$prop")" = "$expected"
           done
