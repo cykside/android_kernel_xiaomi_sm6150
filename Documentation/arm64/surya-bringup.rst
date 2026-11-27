@@ -1209,3 +1209,25 @@ relocates pstore records into ``*/recovery/last_log`` at boot and
 erases the mount, which is why ``/sys/fs/pstore`` can legitimately
 read empty even after a good record; the collector now copies those
 destinations and traces recovery logs for ramoops mentions.
+
+dprz smuggling (capture v3)
+---------------------------
+
+TWRP's own boot still zaps or consumes whatever lives in the console
+and pmsg prz before the collector can mount pstore (proven by the
+empty mount with no "invalid buffer" report, and by ``last_log.gz``
+containing only recovery chatter).  The one prz family the 4.14
+recovery kernel reads without a probe-time zap is the dump zone set:
+``ramoops_init_przs()`` passes no ZAP flag there.  The earlycon
+therefore targets the first legacy dump prz (``0x9d800000``, 256 KiB
+window inside a 512 KiB dprz) and seeds its ring with the exact
+``====<sec>.<nsec>-P`` kmsg header that ``ramoops_read_kmsg_hdr()``
+requires, so recovery exports the whole boot log as
+``dmesg-ramoops-0`` through its normal move-to-last-log path.  The
+ioremap-leaking remap initcall was dropped (it was the source of the
+``ioremap_allowed`` and "early ioremap leak" warnings visible in the
+log3-era capture, which also confirmed the channel: that 11,525-byte
+/sdcard/console-ramoops-0 is the authentic era of build-time ICC QoS
+aborts, ``qcom_icc_rpmh_config_qos`` -> regmap read -> synchronous
+external abort -> panic+5s reboot; log3's era predates skip-qos and
+is not the current failure).

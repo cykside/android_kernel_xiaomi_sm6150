@@ -96,7 +96,7 @@ split_boot;
 [ -s "$SPLITIMG/dtb" ] || abort 'Reference boot does not contain a separate DTB.';
 [ -s "$SPLITIMG/header" ] || abort 'Missing Android boot header metadata.';
 # The integration DTB disables SE0; keep the other reference boot args.
-patch_cmdline 'earlycon=' 'earlycon=ramoops,0x9d900000,0x40000,1048576';
+patch_cmdline 'earlycon=' 'earlycon=ramoops,0x9d800000,0x40000';
 patch_cmdline 'reboot=' 'reboot=warm';
 patch_cmdline 'panic=' 'panic=5';
 flash_boot;

@@ -9,6 +9,12 @@
  *
  *   earlycon=ramoops,<phys addr of the zone>[,<window size>[,<ECC zone size>]]
  *
+ * On Surya the window is aimed at the legacy dump prz (dprz) base so
+ * that the 4.14 recovery exports it as dmesg-ramoops-0: its probe does
+ * not zap dprz headers, its console/pmsg zaps would otherwise erase
+ * everything.  The ring is seeded with the "====<sec>.<nsec>-P" dump
+ * header that ramoops_read_kmsg_hdr() requires.
+ *
  * The window size defaults to 256K, the most a single early_ioremap() can
  * map. Point it at a zone the recovery kernel actually exports: on
  * Surya that is the ramoops console prz (recovery DTs commonly omit a
@@ -250,6 +256,20 @@ static int __init earlycon_ramoops_setup(struct earlycon_device *dev,
 	writel_relaxed(0, &rbuf->start);
 	writel_relaxed(0, &rbuf->size);
 	writel_relaxed(PERSISTENT_RAM_SIG, &rbuf->sig);
+	/*
+	 * Seed the 4.14-era dump record header at the start of the data
+	 * area.  Without it recovery treats the prz as invalid and skips
+	 * the export; it also doubles as a "this earlycon ran" marker.
+	 */
+	{
+		static const char hdr[] = "====0.000000-P\n";
+		unsigned int i;
+
+		for (i = 0; i < sizeof(hdr) - 1; i++)
+			writeb_relaxed(hdr[i], &rbuf->data[i]);
+		writel_relaxed(i, &rbuf->size);
+		writel_relaxed(i, &rbuf->start);
+	}
 	if (ecc_buf)
 		earlycon_ecc_header();
 	/* Publish the anchor even with an empty ring: its magic proves
@@ -266,38 +286,3 @@ static int __init earlycon_ramoops_setup(struct earlycon_device *dev,
 	return 0;
 }
 EARLYCON_DECLARE(ramoops, earlycon_ramoops_setup);
-
-/* Move off the early fixmap mapping once ioremap() works. */
-static int __init earlycon_ramoops_remap(void)
-{
-	struct ramoops_buffer __iomem *old = rbuf, *new;
-	void __iomem *old_ecc = ecc_buf, *new_ecc = NULL;
-
-	if (!old)
-		return 0;
-
-	new = ioremap(rbuf_phys, rbuf_map_size);
-	if (!new)
-		return 0;
-
-	if (old_ecc) {
-		new_ecc = ioremap(ecc_phys, ecc_map_size);
-		if (!new_ecc) {
-			iounmap(new);
-			return 0;
-		}
-	}
-
-	console_lock();
-	rbuf = new;
-	ecc_buf = new_ecc;
-	ranchor = (struct earlycon_anchor __iomem *)
-		((u8 __iomem *)new + rbuf_map_size - EARLYCON_ANCHOR_RESERVE);
-	earlycon_anchor_update();
-	console_unlock();
-	early_iounmap(old, rbuf_map_size);
-	if (old_ecc)
-		early_iounmap(old_ecc, ecc_map_size);
-	return 0;
-}
-early_initcall(earlycon_ramoops_remap);
