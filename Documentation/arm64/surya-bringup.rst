@@ -1231,3 +1231,17 @@ log3-era capture, which also confirmed the channel: that 11,525-byte
 aborts, ``qcom_icc_rpmh_config_qos`` -> regmap read -> synchronous
 external abort -> panic+5s reboot; log3's era predates skip-qos and
 is not the current failure).
+
+Pre-earlycon triage breadcrumbs
+-------------------------------
+
+With the dprz channel live (no "invalid buffer" report and no export at
+all proved the current images die before parse\_earlycon while still
+dying through a PS_HOLD-class panic reboot), ``start_kernel`` itself
+now writes complete persistent_ram records into the second legacy dump
+prz (``0x9d880000``, outside the ring window): ``SURYA-CRUMB
+BOOT-ENTRY`` before ``setup_arch`` and ``ARCH-DONE`` after it.  The
+recovery exports them as ``dmesg-ramoops-1`` even when the boot console
+never registers, splitting the death window into decompressor,
+setup\_arch, or post-setup.  Remove the two ``surya_boot_canary()``
+call sites in init/main.c once booting works.

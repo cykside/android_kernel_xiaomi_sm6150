@@ -196,6 +196,43 @@ static void earlycon_ramoops_write(struct console *con, const char *s,
 	mb();
 }
 
+/*
+ * start_kernel() breadcrumbs, smuggled through the SECOND legacy dump
+ * prz (0x9d880000) which the 4.14 recovery exports without a probe-time
+ * zap.  The write is a complete valid persistent_ram record: if this
+ * runs at all, TWRP shows "dmesg-ramoops-1" even when the boot console
+ * never came up.  "BOOT-ENTRY" = start_kernel entered, died inside
+ * setup_arch; "ARCH-DONE" = survived setup_arch; nothing = died before
+ * start_kernel (decompressor/entry level).  This area is outside the
+ * 256 KiB ring window and never touched by the ring or the anchor.
+ */
+static void __init surya_crumb_write(const char *tag)
+{
+	static const char seed[] = "====0.000000-P\nSURYA-CRUMB ";
+	phys_addr_t base = 0x9d880000;
+	void __iomem *p;
+	unsigned int i, len;
+
+	p = early_ioremap(base, 0x100);
+	if (!p)
+		return;
+
+	len = sizeof(seed) - 1 + strlen(tag);
+	writel_relaxed(PERSISTENT_RAM_SIG, p);
+	writel_relaxed(0, p + 4);
+	writel_relaxed(12 + len, p + 8);
+	for (i = 0; i < sizeof(seed) - 1; i++)
+		writeb_relaxed(seed[i], p + 12 + i);
+	for (i = 0; tag[i]; i++)
+		writeb_relaxed(tag[i], p + 12 + sizeof(seed) - 1 + i);
+	mb();
+}
+
+void __init surya_boot_canary(bool arch_stage)
+{
+	surya_crumb_write(arch_stage ? "ARCH-DONE\n" : "BOOT-ENTRY\n");
+}
+
 static int __init earlycon_ramoops_setup(struct earlycon_device *dev,
 					 const char *opt)
 {
