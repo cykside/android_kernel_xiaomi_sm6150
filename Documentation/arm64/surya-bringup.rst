@@ -1246,3 +1246,29 @@ window 0x9da00000 + full 4.14 prz sizes in the DT), the only
 configuration ever shown to deliver a complete boot log from the real
 device; the boot-side changes since then (skip-qos guard, RPMh
 propagation, UFS unwind) are kept.
+
+
+GDSC raw-offset landmine and the clean-204s boot
+-------------------------------------------------
+
+The 2026-11-27 capture after the capture revert (console-ramoops-8,
+build 1cac6c5f8) is the first complete, ungarbled boot log: the skip-qos
+guard held (no ICC QoS abort) and the boot reached 204s alive.  Two
+findings: (1) the death at 0.33s of the previous build was the vendor
+``qcom,gdsc`` regulator devices - the shared SM6150 DT carries 4.14
+GSDCC-style GCC-relative reg cells (0x177004...) under /soc while this
+tree's ``gdsc-regulator.c`` ioremaps the raw cell as an absolute
+address, so every probe poked a dead window and the asynchronous SError
+landed in ``gdsc_probe+0x970``; all 22 nodes are now disabled at device
+scope and the UFS ``vdd-hba-supply`` wiring is gone (LK leaves the real
+UFS GDSC enabled, exactly the stock 4.14 net state; ``ufshcd-pltfrm``
+skips an absent supply).  (2) The remaining failure is one CPU stuck
+between ~0.6 and 26s: ``kick_all_cpus_sync`` spins forever in
+``toggle_allocation_gate``, workqueue pools cpu=1/cpu=7 are frozen while
+cpu0 keeps printing, and the UFS host is ``unbound`` at 4.6s with an
+EMPTY deferred list -- ``fw_devlink.strict=1`` never started the probe
+because some supplier stayed unprobed (hidden at loglevel=6).  The
+follow-up trial raises loglevel to 7 to surface supplier-wait lines,
+zeroes the nonexistent ``msm_rtb`` filter arg, and disables
+``rcupdate.rcu_expedited`` so one stuck CPU cannot stall every grace
+period into a lockup storm.
