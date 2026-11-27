@@ -1045,3 +1045,121 @@ and PM_GENERIC_DOMAINS_OF resolve to y. Verify the resolved symbols and
 provider registration rather than dropping the power-domain reference:
 that would also change RPMh sleep/wake handling. No corresponding
 attach failure has been established for the last hardware trial.
+
+The packaged v2 trial enables the SDMMagpie discovery node; the default
+Surya DT does not. If discovery fails before publishing cmd_db_header,
+cmd_db_ready() returns -EPROBE_DEFER to RPMh. This happens before DRV
+initialization and is distinct from failure attaching cluster-pd or
+looking up an individual BCM. Keep the Command DB deferral reason in
+the device core so those paths can be distinguished. This does not
+change the reserved window, permit out-of-range mappings, or fix a
+firmware rejection by itself.
+
+The legacy FSociety source does not attach a BCM to either
+slv-qns-cnoc (the SNOC-to-CNOC bridge) or slv-srvc-aggre2-noc.
+The 6.1 table puts both nodes in SN3 and references that shared
+BCM from both aggre1_noc and system_noc. Removing it from only
+one descriptor would neither remove the bridge membership nor
+prevent the other provider from attempting initialization. Both
+trees associate the GEM-to-SNOC master with SN15 and the UFS
+configuration endpoint with CN0. This comparison concerns Linux
+vote descriptions, not the contents of the firmware Command DB.
+
+A breadth-first traversal of the SM6150 C node/link tables confirms
+that ufs-ddr needs Aggre1, System NoC, GEM NoC and MC Virtual, while
+cpu-ufs needs GEM NoC, System NoC and Config NoC. Removing any one
+of the listed providers from its corresponding graph makes the route
+unreachable. This is a static topology check only: it does not show
+that any of those providers registered or committed a vote on hardware.
+
+GEM NoC and MC Virtual also request the display BCM voter before
+registering, even when the consumer is UFS and its path uses HLOS
+nodes. Disabling Surya display consumers does not by itself eliminate
+that provider-level dependency. Violet's remap therefore addresses a
+structurally relevant dependency, but its evidence was a failed
+Display RSC probe after kexec. Confirm the Display RSC failure on
+Surya before redirecting display votes onto the APPS RSC.
+
+Hardware result: e9238fb89
+-------------------------
+
+The TWRP boot-test artifact from run 45984809577 reached the stock logo
+and repeatedly rebooted, according to the tester. The log collector
+returned no records. Offline boot-v2 repack and DT validation passed,
+but this observation does not distinguish an ABL failure from an early
+kernel failure or loss of the ramoops record at reset. Do not attribute
+this run to the earlier Aggre1 probe deferral without new evidence.
+
+The boot-test installer script and the workflow commands that assemble
+its Image.gz, embed the UFS overlay and stage dtbo.img did not change
+between da96d95cb and e9238fb89. That checks source-level packaging
+continuity, not the bytes on the tested device. The test DTB and kernel
+configuration did change: Aggre1 resources, ramoops no-map, GCC
+selection, built-in power/IRQ suppliers and Display RSC voter parent
+all differ. The latest QMP v3 reset phandle matches the older DTB
+again, so it is not a newly introduced DT dependency relative to that
+logged baseline.
+
+The first reported unlogged boot failure, 12c954015, immediately
+followed da96d95cb. Its functional DT delta removed the Aggre1 bulk
+clock references; the other driver delta only changed error reporting
+for the BCM voter lookup. There was no installer delta. Removing
+these references can let Aggre1 reach BCM initialization earlier even
+with skip-qos: QUP0 is keepalive and can send an RPMh request before
+icc_provider_register(). This identifies an altered execution path,
+not evidence that the QUP0 request failed on the device. The Aggre1
+base relocation, GCC selector and Display voter fix all came later.
+
+Violet pstore config parity and Surya reader compatibility
+---------------------------------------------------------
+
+The Surya and Violet fragments request the same built-in pstore,
+ramoops, console, pmsg and ramoops early console. Surya now also
+explicitly disables the two Violet panic reset overrides (Qualcomm
+download mode and forced panic watchdog bite). Keep the Surya boot
+arguments installed by AnyKernel rather than importing Violet's
+board-specific command line.
+
+The memory formats are not interchangeable: Violet's reviewed DT has
+8 MiB at 0xa1600000, with a 4 MiB console and 4 MiB pmsg and no ECC
+property. Surya/FSociety use 4 MiB at 0x9d800000 with two 512 KiB dump
+slots, a 1 MiB console, a 2 MiB pmsg and 16 ECC bytes. The Surya early
+console starts at the pmsg base (0x9da00000) and writes a raw
+persistent RAM header and data, not ECC parity. A successful pstore
+mount does not establish that the recovery kernel uses this layout
+or that its ECC reader accepted the early record. Do not remove ECC
+or relocate the zone on just the writer side: that does not make the
+existing recovery reader compatible. Inspect the recovery dmesg for
+ramoops registration, mapping errors and ECC diagnostics first.
+
+The df0c8bf test report's paraphrase of an RPMh address error is not
+sufficient to diagnose an invalid APPS RSC MMIO base. At da96d95cb,
+the exact ``could not find RPMh address`` string in the interconnect
+path is emitted by the BCM Command DB lookup. Its return value is
+not used to abort provider registration at that revision. Keep the
+observed UFS supplier defer distinct from the report's attribution
+of an RSC probe failure; do not change the APPS RSC base on that basis.
+
+A host Reed-Solomon reproduction (16 parity bytes, first root 0,
+polynomial 0x11d) demonstrated a specific failure mode: an earlycon
+header with size and cursor 8192, paired with stale parity from an
+empty pmsg header, decodes back to size and cursor zero. In the kernel,
+``persistent_ram_init_ecc()`` decodes the header before
+``persistent_ram_post_init()`` checks whether the zone is empty.
+This can hide an earlycon record even when DDR survived. It does not
+establish what parity or header was present on the failed Surya boot.
+
+Zap recovery (anchor block)
+---------------------------
+
+Any later kernel that probes ramoops on the same zones resets the 12-byte
+record header (start, size -> 0) before the log can be read, and 4.14
+readers additionally recompute the header parity, so pstore in recovery
+legitimately shows nothing even when the ring data survived in DRAM.
+The earlycon therefore mirrors its header into an anchor block at the
+end of the 256 KiB window ("2LCE" magic, cursor, length, generation and
+xor checksum).  The collector also raw-dumps the window through
+/dev/mem when it is readable, and scripts/dtc/surya-decode-early-log.py
+rebuilds the record from the anchor when the base header was zapped.
+An anchor that exists with a zero length still proves the kernel reached
+parse_earlycon, which separates a dead kernel from a dead log.

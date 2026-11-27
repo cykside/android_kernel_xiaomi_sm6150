@@ -31,6 +31,23 @@ collect() {
   else
     rm -f "$dir/last_kmsg.txt";
   fi;
+  # pstore can show empty even with the ring data intact in RAM: a
+  # ramoops driver may have zapped the 12-byte header cursor while the
+  # earlycon anchor at the far end of the window still carries it.
+  # Grab the raw window while still in recovery if that is possible.
+  if [ -r /dev/mem ]; then
+    if dd if=/dev/mem of="$dir/early-raw.bin" bs=4096 \
+         skip=$((0x9da00000 / 4096)) count=$((0x40000 / 4096)) 2>/dev/null &&
+       [ -s "$dir/early-raw.bin" ]; then
+      count=$((count + 1));
+      printf 'raw earlycon window 0x9da00000+0x40000 captured\n' > "$dir/early-raw.txt";
+    else
+      rm -f "$dir/early-raw.bin";
+      printf 'dd /dev/mem failed\n' > "$dir/early-raw.txt";
+    fi;
+  else
+    printf 'no readable /dev/mem in this recovery\n' > "$dir/early-raw.txt";
+  fi;
   dmesg > "$dir/twrp-current-dmesg.txt" 2>/dev/null;
   printf 'Previous boot files copied: %s\ntwrp-current-dmesg.txt is from recovery, not the failed kernel.\n' "$count" > "$dir/README.txt";
   sync;

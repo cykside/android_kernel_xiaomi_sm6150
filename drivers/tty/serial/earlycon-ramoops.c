@@ -19,6 +19,7 @@
 #include <linux/init.h>
 #include <linux/io.h>
 #include <linux/kernel.h>
+#include <linux/types.h>
 #include <linux/serial_core.h>
 #include <linux/sizes.h>
 #include <linux/string.h>
@@ -34,10 +35,31 @@ struct ramoops_buffer {
 	u8 data[];
 };
 
+/*
+ * pstore probes in any later kernel (including the recovery one that
+ * collects the log) zap the prz header: start and size go back to 0 while
+ * the data survives.  Mirror the ring state at the end of the window,
+ * where no known zap or record writer reaches, so the dump can be
+ * rebuilt from the anchor even after the header was reset.
+ */
+#define EARLYCON_ANCHOR_SIG	0x45434c32	/* "2LCE" little-endian */
+#define EARLYCON_ANCHOR_RESERVE	128
+
+struct earlycon_anchor {
+	u32 sig;
+	u32 start;
+	u32 size;
+	u32 generation;
+	u32 csum;
+	/* zero pad up to EARLYCON_ANCHOR_RESERVE */
+};
+
 static struct ramoops_buffer __iomem *rbuf;
+static struct earlycon_anchor __iomem *ranchor;
 static phys_addr_t rbuf_phys;
 static size_t rbuf_map_size;
 static u32 rbuf_size;
+static u32 ranchor_gen;
 static void __iomem *ecc_buf;
 static phys_addr_t ecc_phys;
 static size_t ecc_map_size;
@@ -90,6 +112,24 @@ static void earlycon_ecc_header(void)
 			   ecc_buf + ecc_map_size - RAMOOPS_ECC_BYTES);
 }
 
+static void earlycon_anchor_update(void)
+{
+	struct earlycon_anchor a;
+
+	a.sig = cpu_to_le32(EARLYCON_ANCHOR_SIG);
+	a.start = cpu_to_le32(readl_relaxed(&rbuf->start));
+	a.size = cpu_to_le32(readl_relaxed(&rbuf->size));
+	a.generation = cpu_to_le32(ranchor_gen);
+	a.csum = cpu_to_le32(EARLYCON_ANCHOR_SIG ^ ranchor_gen ^
+			     le32_to_cpu(a.start) ^ le32_to_cpu(a.size));
+	writel_relaxed(a.sig, &ranchor->sig);
+	writel_relaxed(a.start, &ranchor->start);
+	writel_relaxed(a.size, &ranchor->size);
+	writel_relaxed(a.csum, &ranchor->csum);
+	writel_relaxed(a.generation, &ranchor->generation);
+	mb();
+}
+
 
 static void earlycon_ramoops_write(struct console *con, const char *s,
 				   unsigned int n)
@@ -116,6 +156,10 @@ static void earlycon_ramoops_write(struct console *con, const char *s,
 	writel_relaxed(size, &rbuf->size);
 	if (ecc_buf)
 		earlycon_ecc_header();
+	if (ranchor) {
+		ranchor_gen++;
+		earlycon_anchor_update();
+	}
 	/* make sure it reached DDR before a reset can hit */
 	mb();
 }
@@ -147,7 +191,10 @@ static int __init earlycon_ramoops_setup(struct earlycon_device *dev,
 
 	rbuf_phys = dev->port.mapbase;
 	rbuf_map_size = size;
-	rbuf_size = size - sizeof(*rbuf);
+	if (size <= sizeof(*rbuf) + EARLYCON_ANCHOR_RESERVE)
+		return -EINVAL;
+	rbuf_size = round_down(size - sizeof(*rbuf) - EARLYCON_ANCHOR_RESERVE,
+			       RAMOOPS_ECC_BLOCK);
 	if (zone) {
 		if (zone <= size + RAMOOPS_ECC_BYTES ||
 		    !IS_ALIGNED(rbuf_phys, PAGE_SIZE) || rbuf_phys + zone < rbuf_phys)
@@ -157,7 +204,6 @@ static int __init earlycon_ramoops_setup(struct earlycon_device *dev,
 				      RAMOOPS_ECC_BLOCK + RAMOOPS_ECC_BYTES);
 		ecc_map_size = (blocks + 1) * RAMOOPS_ECC_BYTES;
 		offset = zone - ecc_map_size;
-		rbuf_size = round_down(rbuf_size, RAMOOPS_ECC_BLOCK);
 		if (!rbuf_size || PAGE_ALIGN(size) > round_down(offset, PAGE_SIZE) ||
 		    offset - round_down(offset, PAGE_SIZE) + ecc_map_size > SZ_256K)
 			return -EINVAL;
@@ -180,6 +226,14 @@ static int __init earlycon_ramoops_setup(struct earlycon_device *dev,
 	writel_relaxed(PERSISTENT_RAM_SIG, &rbuf->sig);
 	if (ecc_buf)
 		earlycon_ecc_header();
+	/* Publish the anchor even with an empty ring: its magic proves
+	 * that earlycon came up, which tells a dead kernel from a dead
+	 * log when the collector finds nothing in pstore.
+	 */
+	ranchor = (struct earlycon_anchor __iomem *)
+		((u8 __iomem *)rbuf + rbuf_map_size - EARLYCON_ANCHOR_RESERVE);
+	ranchor_gen = 0;
+	earlycon_anchor_update();
 	mb();
 
 	dev->con->write = earlycon_ramoops_write;
@@ -211,6 +265,9 @@ static int __init earlycon_ramoops_remap(void)
 	console_lock();
 	rbuf = new;
 	ecc_buf = new_ecc;
+	ranchor = (struct earlycon_anchor __iomem *)
+		((u8 __iomem *)new + rbuf_map_size - EARLYCON_ANCHOR_RESERVE);
+	earlycon_anchor_update();
 	console_unlock();
 	early_iounmap(old, rbuf_map_size);
 	if (old_ecc)

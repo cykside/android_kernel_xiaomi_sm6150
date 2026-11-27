@@ -8,6 +8,22 @@ from pathlib import Path
 
 WINDOW = 0x40000
 SIGNATURE = 0x43474244
+ANCHOR_SIGNATURE = 0x45434C32
+ANCHOR_OFFSET = WINDOW - 128
+# Data capacity published by the earlycon driver (header + anchor removed,
+# rounded down to whole 128-byte ECC blocks).
+CAPACITY = (WINDOW - 12 - 128) // 128 * 128
+
+
+def anchor(raw):
+    sig, cursor, length, generation, csum = struct.unpack_from('<IIIII', raw,
+                                                                ANCHOR_OFFSET)
+    if sig != ANCHOR_SIGNATURE or csum != (
+            ANCHOR_SIGNATURE ^ generation ^ cursor ^ length):
+        return None
+    if length > CAPACITY or cursor >= max(length, 1) or cursor >= CAPACITY:
+        return None
+    return cursor, length, generation
 
 
 def decode(raw):
@@ -17,7 +33,21 @@ def decode(raw):
     data = raw[12:]
     # The ECC writer only uses whole 128-byte blocks. A wrapped ECC
     # record can be distinguished from a partial legacy record by its cursor.
-    ecc_capacity = len(data) // 128 * 128
+    ecc_capacity = CAPACITY
+    if signature != SIGNATURE or not length:
+        # A later ramoops driver may have zapped the 12-byte header
+        # (start, size -> 0) without touching the ring or the anchor.
+        recovery = anchor(raw)
+        if recovery is None:
+            raise ValueError('earlycon header invalid and no anchor record')
+        cursor, length, generation = recovery
+        if not length:
+            raise ValueError(
+                f'earlycon came up (anchor generation {generation}) but no '
+                'output was flushed before the reset')
+        if length == ecc_capacity:
+            return data[cursor:length] + data[:cursor]
+        return data[:length]
     if signature != SIGNATURE:
         raise ValueError('earlycon signature not found')
     if not length or length > len(data) or cursor >= len(data):
