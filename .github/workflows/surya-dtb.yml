@@ -907,6 +907,17 @@ jobs:
           test "$(fdtget -t x dtb "$aggre" qcom,bcm-voters)" = "$(fdtget -t x dtb "$voter" phandle)"
           test "$(fdtget -t s dtb "$voter" compatible)" = qcom,bcm-voter
           test "$(fdtget -t u dtb "$rsc/drv@2" qcom,drv-id)" = 2
+          disp_drv=/soc/rsc@af20000/drv@0
+          disp_voter=$disp_drv/bcm_voter
+          test "$(fdtget -t u dtb "$disp_drv" qcom,drv-id)" = 0
+          test "$(fdtget -t s dtb "$disp_voter" compatible)" = qcom,bcm-voter
+          apps_handle=$(fdtget -t x dtb "$voter" phandle)
+          disp_handle=$(fdtget -t x dtb "$disp_voter" phandle)
+          test "$apps_handle" != "$disp_handle"
+          for noc in /soc/interconnect@2 /soc/interconnect@9680000 /soc/interconnect@1740000; do
+            test "$(fdtget -t s dtb "$noc" qcom,bcm-voter-names)" = 'hlos disp'
+            test "$(fdtget -t x dtb "$noc" qcom,bcm-voters)" = "$apps_handle $disp_handle"
+          done
           test "$(fdtget -t x dtb "$rsc" power-domains)" = "$(fdtget -t x dtb /psci/cluster-pd phandle)"
           test "$(fdtget -t s dtb /psci compatible)" = arm,psci-1.0
           test "$(fdtget -t s dtb /psci method)" = smc
