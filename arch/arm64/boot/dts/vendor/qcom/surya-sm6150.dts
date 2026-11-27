@@ -74,13 +74,65 @@
 &vcodec0_gdsc { status = "disabled"; };
 &venus_gdsc { status = "disabled"; };
 
-/* Supply routing from 4.14 sdmmagpie-idp.dtsi; not enabled for probing. */
+/*
+ * CPU idle states.  This board ships a downstream (4.14-era) PSCI
+ * implementation that refuses the OSI-mode switch -- "psci: failed to set PC
+ * mode: -3" in every Surya capture -- and has no mapping for the state IDs the
+ * inherited DT votes (0x40000003 "pc", 0x40000004 "rail-pc").  The 2026-11-27
+ * 20:46 capture shows what that costs: CPU#7 stopped answering IPIs around the
+ * first idle entry (~2s), so kick_all_cpus_sync() from the jump-label update
+ * spun forever in smp_call_function_many_cond(), RCU never finished a grace
+ * period, and init never ran.  Disabling the four CPU states leaves
+ * cpuidle-psci with only the WFI state (drivers/cpuidle/dt_idle_states.c skips
+ * unavailable states and cpuidle-psci.c adds WFI unconditionally), which is the
+ * same idle the stock 4.14 kernel uses until its lpm-levels driver binds.
+ * The cluster domain states stay described for the runtime-PM path but are
+ * never entered, because no CPU state asks for a cluster power down.
+ */
+&SILVER_OFF { status = "disabled"; };
+&SILVER_PLL_OFF { status = "disabled"; };
+&GOLD_OFF { status = "disabled"; };
+&GOLD_RAIL_OFF { status = "disabled"; };
+
+/*
+ * Boot arguments.  sm6150.dtsi ships fw_devlink.strict=1, which makes every
+ * property that lists a phandle a mandatory probe dependency -- including the
+ * ones whose supplier is a class device with no driver of its own (see the
+ * UFS note below).  fw_devlink=permissive keeps the ordering hints but stops
+ * deferring probes on suppliers that can never report "probed", which is how a
+ * device tree whose suppliers are class devices (not bound platform drivers) is
+ * booted.  The rest of
+ * the line is bring-up visibility: initcall_debug names the last completed
+ * initcall when a CPU wedges, and loglevel=7 keeps the KERN_INFO lines
+ * (probe-deferral reasons included).
+ */
+&chosen {
+	bootargs = "kpti=0 ssbd=force-off qcom_dma_heaps.enable_bitstream_contig_heap=y rcupdate.rcu_expedited=0 cpufreq.default_governor=performance fw_devlink=permissive cpuidle.off=1 initcall_debug=1 loglevel=7";
+};
+
+/*
+ * UFS host and PHY.  The 4.14 supply routing is deliberately NOT inherited.
+ * Each *-supply here names an LDO child of a qcom,rpmh-vrm-regulator parent,
+ * and the vendor rpmh-regulator driver registers those LDOs with
+ * devm_regulator_register(): the regulator struct device carries the child
+ * node as of_node but never becomes the primary fwnode device of that node,
+ * so the fw_devlink link from the UFS nodes has no supplier device to wait
+ * on and the consumer is parked without a single log line.  That is the exact
+ * shape of the 2026-11-27 20:46 failure: "/soc/ufshc@1d84000 enabled;
+ * unbound" and "/soc/ufsphy_mem@1d87000 enabled; unbound" at 4.58s with an
+ * empty deferred-probe list, so no block device ever appeared for
+ * first-stage init.
+ *
+ * Both drivers take an absent supply as "rail is already up": ufshcd does it
+ * explicitly ("Unable to find %s regulator, assuming enabled"), ufs-qcom only
+ * parses qcom,vddp-ref-clk when the property exists, and the QMP v3 PHY driver
+ * never asks for vdda-phy/vdda-pll at all.  The rails must stay as the
+ * bootloaders left them -- the boot device hangs off VCC/VCCQ2 -- so dropping
+ * the phandles is both the unblock and the honest description of the boot
+ * state.  Same reasoning as the removed vdd-hba-supply.
+ */
 &ufsphy_mem {
 	compatible = "qcom,ufs-phy-qmp-v3";
-	vdda-phy-supply = <&pm6150_l4>;
-	vdda-pll-supply = <&pm6150l_l3>;
-	vdda-phy-max-microamp = <62900>;
-	vdda-pll-max-microamp = <18300>;
 	status = "disabled";
 };
 
@@ -91,12 +143,6 @@
 	/delete-property/ nvmem-cells;
 	/delete-property/ nvmem-cell-names;
 	/delete-property/ boot_device_type;
-	vcc-supply = <&pm6150_l19>;
-	vccq2-supply = <&pm6150_l12>;
-	vcc-max-microamp = <600000>;
-	vccq2-max-microamp = <600000>;
-	qcom,vddp-ref-clk-supply = <&pm6150l_l3>;
-	qcom,vddp-ref-clk-max-microamp = <100>;
 	status = "disabled";
 };
 

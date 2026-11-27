@@ -364,10 +364,12 @@ jobs:
               else if ($2 == phy) p++;
               else {print; unexpected++}
             }
-            # vdd-hba-supply intentionally absent: the UFS GDSC stays in
-            # its bootloader-enabled state and the raw-offset vendor GDSC
-            # regulator must not probe (SError).  Three host supplies.
-            END {exit (unexpected || h != 3 || p != 2)}
+            # No UFS node may reference a regulator at all: the raw-offset
+            # vendor GDSC regulator must not probe (SError) and the RPMh VRM
+            # LDOs are registered as class devices, so their child nodes never
+            # become a supplier fw_devlink can wait on -- the host and PHY were
+            # parked "enabled; unbound" with an empty deferred list that way.
+            END {exit (unexpected || h || p)}
           ' "$RUNNER_TEMP/surya-ufs-test.txt"
 
       - name: Build the minimal-symbol Surya overlay base (offline only)
@@ -965,6 +967,41 @@ jobs:
             echo '::error::UFS host must not reference the raw-offset GDSC regulator'
             exit 1
           fi
+          # A regulator phandle on either UFS node is a silent probe blocker:
+          # the vendor rpmh-regulator registers LDOs as class devices, so the
+          # LDO child node never gains the struct device fw_devlink waits for.
+          for supply in vdd-hba-supply vcc-supply vccq2-supply \
+                        qcom,vddp-ref-clk-supply vdda-phy-supply vdda-pll-supply; do
+            if fdtget -t x dtb "$host" "$supply" >/dev/null 2>&1 ||
+               fdtget -t x dtb "$phy" "$supply" >/dev/null 2>&1; then
+              echo "::error::Surya UFS nodes must not depend on RPMh VRM regulators ($supply)"
+              exit 1
+            fi
+          done
+          # Bring-up knobs the 20:46 stall analysis forced: no strict supplier
+          # ordering, no PSCI idle entry, visible initcalls and probe messages.
+          bootargs=$(fdtget -t s dtb /chosen bootargs)
+          if ! grep -q 'fw_devlink=permissive' <<< "$bootargs"; then
+            echo '::error::Surya chosen bootargs lost fw_devlink=permissive'
+            exit 1
+          fi
+          if grep -q 'fw_devlink.strict' <<< "$bootargs"; then
+            echo '::error::Surya chosen bootargs still enforce strict supplier ordering'
+            exit 1
+          fi
+          for knob in 'cpuidle.off=1' 'initcall_debug=1' 'loglevel=7'; do
+            if ! grep -q "$knob" <<< "$bootargs"; then
+              echo "::error::Surya chosen bootargs lost $knob"
+              exit 1
+            fi
+          done
+          # Only WFI may be offered to the scheduler: the downstream PSCI
+          # implementation rejects the OSI-mode switch, so the vendor
+          # power-down states wedge CPUs (CPU#7 in the 2026-11-27 capture).
+          for state in /idle-states/silver-c3 /idle-states/silver-c4 \
+                       /idle-states/gold-c3 /idle-states/gold-c4; do
+            test "$(fdtget -t s dtb "$state" status)" = disabled
+          done
           test "$(fdtget -t s dtb "$host" reset-names)" = rst
           test "$(fdtget -t s dtb "$host" pinctrl-names)" = 'dev-reset-assert dev-reset-deassert'
           test "$(fdtget -t s dtb "$host" interconnect-names)" = 'ufs-ddr cpu-ufs'

@@ -1272,3 +1272,74 @@ follow-up trial raises loglevel to 7 to surface supplier-wait lines,
 zeroes the nonexistent ``msm_rtb`` filter arg, and disables
 ``rcupdate.rcu_expedited`` so one stuck CPU cannot stall every grace
 period into a lockup storm.
+
+What actually blocks the UFS probe, and the idle-state wedge
+------------------------------------------------------------
+
+The follow-up capture disproved two of the hypotheses recorded above, and
+the log itself explains why the promised "supplier-wait" lines never
+appeared.
+
+``/soc/interconnect@1700000`` "missing; no platform device" is an artefact
+of the snapshot tool, not a defect: SDMMagpie numbers that block aggre2, and
+SM6150 has no DT node at 0x1700000 at all.  The interconnect providers the
+UFS host actually names (aggre1 at 0x16e0000, mc at 0x2, gem at 0x9680000,
+config at 0x1500000) were all bound, two of them visible in the capture as
+"driver assigned".  Likewise ``qnoc-sm6150 ... SN3/SN5 could not find RPMh
+address`` cannot defer anything: ``qcom_icc_bcm_init()`` returns the error
+and ``qcom_icc_rpmh_probe()`` (drivers/interconnect/qcom/icc-rpmh.c) ignores
+the return value, so a missing BCM voter is cosmetic.
+
+The real blocker is fw_devlink's silent parking of the consumers.
+``sm6150.dtsi`` ships ``fw_devlink.strict=1`` in ``/chosen/bootargs`` and even
+without it every non-optional supplier property (clocks, interconnects, phys,
+resets, ``*-supply``) becomes a *mandatory* link.  ``of_link_to_phandle()``
+(drivers/of/property.c) only skips a link when the supplier node or one of its
+ancestors is unavailable or already owns a device; and the vendor
+``rpmh-regulator.c`` registers each PMIC LDO with ``devm_regulator_register()``,
+whose ``struct device`` is a regulator-class device that carries the child DT
+node only as ``dev->of_node``.  That node therefore never gets a primary
+fwnode device, the fwnode link is never converted or purged, and
+``fwnode_links_check_suppliers()`` keeps answering "still waiting" - the
+consumer is left with ``dev->can_match == false``, so ``__driver_attach()``
+never even reaches ``really_probe()`` and no ``dev_err_probe`` line and no
+deferred-probe entry is ever produced.  That is precisely the observed
+"enabled; unbound" with an empty deferred list, and it applies to
+``/soc/ufshc@1d84000`` (vcc/vccq2/qcom,vddp-ref-clk) and to
+``/soc/ufsphy_mem@1d87000`` (vdda-phy/vdda-pll) alike.  It is independent of
+whether the RPMh VRM resources are readable: a supplier with a working
+regulator and no bound driver still blocks.
+
+The fix has three parts, all device-scope for Surya:
+
+* the five PMIC supply phandles are dropped from both UFS nodes.  ufshcd
+  treats an absent supply as "rail already enabled" and ufs-qcom only parses
+  ``qcom,vddp-ref-clk`` when the property exists; the QMP v3 PHY driver never
+  asks for vdda-phy/vdda-pll.  ``*-max-microamp`` goes with them so
+  ``regulator_set_load()`` is never called on a rail the kernel does not own.
+  The rails themselves must stay up - the boot device hangs off VCC/VCCQ2 -
+  which is the state the bootloaders leave them in.
+* ``/chosen/bootargs`` now asks for ``fw_devlink=permissive``, which makes
+  ``fwnode_links_check_suppliers()`` return immediately and demotes device
+  links to best effort, and adds ``cpuidle.off=1``, ``initcall_debug=1`` and
+  ``loglevel=7``.
+* the four CPU idle states (silver-c3/c4, gold-c3/c4) are ``status =
+  "disabled"``.  This firmware refuses the OSI-mode switch ("psci: failed to
+  set PC mode: -3") and has no mapping for the DT state ids 0x40000003 and
+  0x40000004; with every state gone ``dt_idle_states.c`` leaves cpuidle-psci
+  with only the WFI state it appends, so no CPU ever issues CPU_SUSPEND.  That
+  is what wedged CPU#7 in the capture, which in turn made
+  ``kick_all_cpus_sync()`` spin forever while a workqueue worker enabled the
+  KFENCE static key.
+
+KFENCE is off for the same reason (``# CONFIG_KFENCE is not set`` in the Surya
+fragment): ``toggle_allocation_gate()`` is a workqueue call into
+``static_key_enable()`` and thus ``kick_all_cpus_sync()``, so it converts one
+unresponsive CPU into a machine-wide RCU stall during bring-up, while
+sampling nothing yet.
+
+drivers/base/dd.c's snapshot now prints ``can_match`` per node and, for an
+unbound node, every supplier phandle it holds with the supplier's own
+availability and whether that supplier has a device and a driver - the exact
+facts fw_devlink uses - so a future stall names its blocker in the log
+instead of leaving it to be inferred.

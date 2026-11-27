@@ -367,19 +367,92 @@ void deferred_probe_extend_timeout(void)
 	}
 }
 
-/* Surya first-stage init can exit before the normal deferred-probe timeout. */
+/*
+ * Surya first-stage init can exit before the normal deferred-probe timeout.
+ * The interconnect paths are the providers named by the UFS host's
+ * interconnects property; 0x1700000 is deliberately absent because SDMMagpie
+ * numbers that block aggre2 and this SoC has no node there -- an earlier
+ * capture listed it and the "missing; no platform device" line was read as a
+ * UFS supplier, which it never was.
+ */
 static const char * const surya_storage_paths[] = {
 	"/soc/ufshc@1d84000",
 	"/soc/ufsphy_mem@1d87000",
 	"/soc/interconnect@16e0000",
-	"/soc/interconnect@1700000",
+	"/soc/interconnect@1500000",
+	"/soc/interconnect@9680000",
+	"/soc/interconnect@2",
 	"/soc/interconnect@1620000",
 	"/soc/clock-controller@100000",
 	"/soc/rsc@18200000",
 	"/soc/rsc@18200000/drv@2",
 	"/soc/rsc@18200000/drv@2/bcm_voter",
 	"/soc/rsc@18200000/drv@2/clock-controller",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-ldoa19",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-ldoa12",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-ldoa13",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-ldoa4",
 };
+
+/*
+ * fw_devlink parks a consumer in silence while one of its supplier phandles
+ * points at a firmware node that never gains a struct device: the vendor RPMh
+ * regulator driver registers its LDOs with devm_regulator_register(), so the
+ * child device tree nodes have no primary fwnode device and the link from the
+ * consumer is never purged.  Print the supplier view for an unbound node so a
+ * stall names its blocker instead of leaving it to be guessed.
+ */
+static const struct {
+	const char *list;
+	const char *cells;
+} surya_supplier_lists[] = {
+	{ "clocks", "#clock-cells" },
+	{ "interconnects", "#interconnect-cells" },
+	{ "phys", "#phy-cells" },
+	{ "resets", "#reset-cells" },
+	{ "power-domains", "#power-domain-cells" },
+	{ "vdd-hba-supply", NULL },
+	{ "vcc-supply", NULL },
+	{ "vccq2-supply", NULL },
+	{ "qcom,vddp-ref-clk-supply", NULL },
+	{ "vdda-phy-supply", NULL },
+	{ "vdda-pll-supply", NULL },
+};
+
+static void surya_report_suppliers(struct device_node *con)
+{
+	int i, index;
+
+	for (i = 0; i < ARRAY_SIZE(surya_supplier_lists); i++) {
+		const char *list = surya_supplier_lists[i].list;
+		const char *cells = surya_supplier_lists[i].cells;
+
+		for (index = 0; ; index++) {
+			struct of_phandle_args args;
+			struct device_node *sup;
+			struct fwnode_handle *fwn;
+			struct device *sdev;
+
+			if (cells) {
+				if (of_parse_phandle_with_args(con, list, cells,
+								index, &args))
+					break;
+				sup = args.np;
+			} else {
+				sup = of_parse_phandle(con, list, index);
+				if (!sup)
+					break;
+			}
+
+			fwn = of_fwnode_handle(sup);
+			sdev = READ_ONCE(fwn->dev);
+			pr_notice("Surya storage snapshot: supplier %s[%d] -> %pOFn available:%d device:%d driver:%d\n",
+				  list, index, sup, of_device_is_available(sup),
+				  !!sdev, sdev ? !!READ_ONCE(sdev->driver) : 0);
+			of_node_put(sup);
+		}
+	}
+}
 
 static bool surya_storage_device(const struct device *dev)
 {
@@ -411,8 +484,13 @@ static void surya_ufs_snapshot(struct work_struct *work)
 		pr_notice("Surya storage snapshot: %s %s; %s\n", path, state,
 			  !pdev ? "no platform device" :
 			  READ_ONCE(pdev->dev.driver) ? "driver assigned" : "unbound");
-		if (pdev)
+		if (pdev) {
+			pr_notice("Surya storage snapshot: %s can_match: %d\n",
+				  path, pdev->dev.can_match);
+			if (!READ_ONCE(pdev->dev.driver))
+				surya_report_suppliers(np);
 			put_device(&pdev->dev);
+		}
 		of_node_put(np);
 	}
 

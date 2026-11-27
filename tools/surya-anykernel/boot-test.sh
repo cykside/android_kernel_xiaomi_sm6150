@@ -42,10 +42,18 @@ split_boot;
 patch_cmdline 'earlycon=' 'earlycon=ramoops,0x9da00000,0x40000';
 patch_cmdline 'reboot=' 'reboot=warm';
 patch_cmdline 'panic=' 'panic=5';
-# Keep PSCI capability notices and warnings, but suppress routine info.
+# Keep every probe message, including the KERN_INFO deferral reasons.
 patch_cmdline 'loglevel=' 'loglevel=7';
 patch_cmdline 'msm_rtb.filter=' 'msm_rtb.filter=0x0';
 patch_cmdline 'rcupdate.rcu_expedited=1' 'rcupdate.rcu_expedited=0';
+# Probe-blocking and idle bring-up knobs, mirrored in the Surya DT chosen node:
+# fw_devlink=permissive stops consumers (UFS first) from waiting on suppliers
+# that can never report probed, cpuidle.off=1 keeps every CPU out of the PSCI
+# idle path this firmware rejects, initcall_debug records the last initcall
+# before a wedged CPU.
+patch_cmdline 'fw_devlink=' 'fw_devlink=permissive';
+patch_cmdline 'cpuidle.off=' 'cpuidle.off=1';
+patch_cmdline 'initcall_debug' 'initcall_debug=1';
 grep -Eq '^cmdline=.*earlycon=ramoops,0x9da00000,0x40000( |$)' "$SPLITIMG/header" ||
   abort 'Log argument missing; nothing written.';
 flash_boot;
