@@ -946,6 +946,11 @@ jobs:
           fi
           ramoops_properties=$(fdtget -p dtb /reserved-memory/ramoops@9d800000)
           grep -qx no-map <<< "$ramoops_properties"
+          # The earlycon ECC layout must match the existing Surya recovery reader.
+          for spec in 'record-size 80000' 'console-size 100000' 'pmsg-size 200000' 'ecc-size 10'; do
+            read -r prop expected <<< "$spec"
+            test "$(fdtget -t x dtb /reserved-memory/ramoops@9d800000 "$prop")" = "$expected"
+          done
           gdsc=/soc/qcom,gdsc@177004
           [[ "$(fdtget -t s dtb "$gdsc" status)" =~ ^(ok|okay)$ ]]
           test "$(fdtget -t x dtb "$host" vdd-hba-supply)" = "$(fdtget -t x dtb "$gdsc" phandle)"

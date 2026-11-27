@@ -39,12 +39,12 @@ ui_print 'Experimental: writing Boot and DTBO only. Do not reboot if installatio
 split_boot;
 [ -s "$SPLITIMG/dtb" ] || abort 'Reference boot does not contain a separate DTB.';
 [ -s "$SPLITIMG/header" ] || abort 'Missing boot header metadata.';
-patch_cmdline 'earlycon=' 'earlycon=ramoops,0x9da00000,0x40000';
+patch_cmdline 'earlycon=' 'earlycon=ramoops,0x9da00000,0x40000,2097152';
 patch_cmdline 'reboot=' 'reboot=warm';
 patch_cmdline 'panic=' 'panic=5';
 # Keep PSCI capability notices and warnings, but suppress routine info.
 patch_cmdline 'loglevel=' 'loglevel=6';
-grep -Eq '^cmdline=.*earlycon=ramoops,0x9da00000,0x40000( |$)' "$SPLITIMG/header" ||
+grep -Eq '^cmdline=.*earlycon=ramoops,0x9da00000,0x40000,2097152( |$)' "$SPLITIMG/header" ||
   abort 'Log argument missing; nothing written.';
 flash_boot;
 flash_generic dtbo;
