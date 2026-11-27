@@ -112,6 +112,56 @@
 };
 
 /*
+ * GCC's CX voltage class.  This is the line that decides whether /soc/ufshc
+ * ever probes, and capture 10 (2026-11-28 22:0x, console-ramoops-10.txt)
+ * pins it exactly:
+ *
+ *   1.257457 Surya bringup: r0 probing /soc/clock-controller@100000
+ *   1.257865 k61probe: 100000.clock-controller (gcc-sm6150)
+ *   ... nothing, ever.  No "Registered GCC clocks", and no
+ *   "Rate ... is greater than highest Fmax" line either, so the probe never
+ *   reached qcom_cc_really_probe().
+ *   5.347050 Surya bringup: provider chain still at /soc/clock-controller@100000
+ *   21.475038 Surya bringup: deferred probe still in clock-controller@100000
+ *   21.475181 task:kworker/u16:0 state:D ... __mutex_lock+0x408 __device_attach
+ *
+ * i.e. gcc_sm6150_probe() blocks with the device mutex held, and the serial
+ * deferred pass queues behind it.  Before this capture the same probe never
+ * even appeared to start, which is why the deferred-probe list looked empty.
+ *
+ * What it blocks on is the regulator graph, and the DT says why only GCC does:
+ * gcc_sm6150_probe() (drivers/clk/qcom/gcc-sm6150.c:3488) makes three
+ * mandatory devm_regulator_get() calls and returns the error of each, so an
+ * unresolved rail is a probe that cannot finish.  In sm6150-regulator.dtsi the
+ * three targets are not peers:
+ *
+ *   vdd_mx-supply    -> regulator-pm6150-s3           (leaf: no vin/parent edge)
+ *   vdd_cx-supply    -> regulator-pm6150-s1          (parent-supply -> s3)
+ *   vdd_cx_ao-supply -> regulator-pm6150-s1-level-ao (vin-supply -> s3-level-ao)
+ *
+ * The AO pair is the odd one out.  Its supplier is the MX AO arc child, whose
+ * parent block rpmh-regulator-mxlvl carries no proxy-supply at all (only cxlvl
+ * does, which is why the log reports the "Fixed dependency cycle(s)" notice for
+ * cxlvl and the VRM LDOs but not for mxlvl), and no driver in this tree except
+ * GCC asks for a vdd_cx_ao rail.  dispcc asks for vdd_cx only and its probe
+ * returned in 6822 usecs in the same window -- that is the control case: same
+ * regulator class, same ARC parent, one supply less, no stall.
+ *
+ * So the AO edge goes away for this board: vote the CX always-on class through
+ * the same resolvable pm6150_s1_level regulator the non-AO class uses.  For a
+ * level vote that is not a loss of information -- "AO" vs "NAPM" only selects
+ * which RPMh TCS the write goes to, i.e. whether AOSD keeps the vote across
+ * sleep, and CX is held up through the whole bring-up path (cpuidle.off=1, and
+ * this firmware refuses OSI mode anyway: "psci: failed to set PC mode: -3").
+ * The clock driver then keeps both classes pointing at one regulator; the core
+ * takes the maximum request of the two, which is exactly the corner the
+ * bootloader left the rail at.
+ */
+&gcc {
+	vdd_cx_ao-supply = <&VDD_CX_LEVEL>;
+};
+
+/*
  * UFS host and PHY.  The 4.14 supply routing is deliberately NOT inherited.
  * Each *-supply here names an LDO child of a qcom,rpmh-vrm-regulator parent,
  * and the vendor rpmh-regulator driver registers those LDOs with

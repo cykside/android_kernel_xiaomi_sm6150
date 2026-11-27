@@ -1445,3 +1445,87 @@ gate the boot device, so the config stays as it is; the node is only added to
 the read-only snapshot list.  Enabling the APCS mailbox driver would let AOSS
 start receiving sleep votes, which is not a trade worth making while the
 first stage still has to boot.
+
+First stage runs: the stall is inside ``gcc_sm6150_probe()``
+------------------------------------------------------------
+
+console-ramoops-10.txt (2026-11-28 22:0x, kernel from ``0d090945a``) is the
+first capture in this bring-up that reaches userspace, and it names the
+remaining blocker instead of leaving it to inference:
+
+``[    1.223073][T1] Surya bringup: armed (compatible xiaomi,surya=1073741823
+qcom,sm6150=1073741819)`` -- the gate is live (``of_machine_is_compatible()``
+returns the match count, which is why the numbers look like noise).  The chain
+thread then ran the dependency list in order and everything bound:
+``/soc/rsc@18200000 -> bound``, ``interconnect@9680000``, ``@1500000``,
+``@1620000``, ``@16e0000`` all ``-> bound``, ``interconnect@2`` deferred once.
+Then::
+
+  [    1.257457][  T107] Surya bringup: r0 probing /soc/clock-controller@100000
+  [    1.257865][  T107] k61probe: 100000.clock-controller (gcc-sm6150)
+  [    5.347050][    T1] Surya bringup: provider chain still at /soc/clock-controller@100000 after 4 s
+  [   15.391033][    T1] Surya bringup: deferred pass still busy after 10 s, continuing init
+  [   21.475038][   T90] Surya bringup: deferred probe still in clock-controller@100000 [100000.clock-controller] after 20 s
+  [   21.475181][   T90] task:kworker/u16:0 state:D ... __mutex_lock+0x408/0xdac
+  [   21.476266][   T90]  __device_attach+0x38/0x1a0  <- queueing for the device mutex
+  [   21.476476][   T90]  bus_probe_device+0x34/0xb4
+  [   21.476556][   T90]  deferred_probe_work_func+0x148/0x190
+
+so the pass is not stuck *inside* a probe any more; it is stuck waiting for the
+device mutex that the chain thread holds, and the chain thread is the one
+inside ``gcc_sm6150_probe()``, which printed no result line and no
+"Registered GCC clocks" and never even reached the ``Rate ... greater than
+highest Fmax`` messages that clock registration produces.  ``/soc/ufshc@1d84000``
+sat on the deferred list with ``can_match: 1`` and every supplier ready except
+``phys[0] -> ufsphy_mem ... driver:0``, which in turn waits on the host
+(``resets[0] -> ufshc ... driver:0``) -- the phy/host pair is fine, it is just
+downstream of a clock provider that never finishes.
+
+Because both waits were bounded, init still ran, which is the whole point of
+that half of the change::
+
+  [   25.445194][T1] Freeing unused kernel memory: 4608K
+  [   25.445434][T1] Run /init as init process
+  [   25.449279][T1] init: init first stage started!
+  [   25.450046][T1] init: [libfs_mgr]ReadFstabFromDt(): failed to read fstab from dt
+  [   25.612688][T1] init: ... partition(s) not found in /sys, waiting for their uevent(s): metadata, super, vbmeta_system
+  [   35.619464][T1] init: ... partition(s) not found after polling timeout: metadata, super, vbmeta_system
+  [   35.620008][T1] init: Failed to mount required partitions early ...
+  [   35.620328][T1] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00007f00
+
+``exitcode=0x00007f00`` is init exiting 127 after its own 10 s partition poll:
+no UFS host, hence no ``/dev/block/by-name/*``, hence first stage gives up.
+Everything before that line is now correct -- PSCI, Command DB, RPMh,
+interconnects, clocks other than GCC, the DTB overlay merge, the pstore window.
+
+The cause, from the device tree rather than from a guess.
+``gcc_sm6150_probe()`` (drivers/clk/qcom/gcc-sm6150.c:3483) starts with three
+*mandatory* ``devm_regulator_get()`` calls that each ``return PTR_ERR()``, and
+in ``sm6150-regulator.dtsi`` the three targets are not peers:
+``vdd_mx-supply`` is a leaf, ``vdd_cx-supply`` reaches MX through a
+``*-parent-supply`` edge, and ``vdd_cx_ao-supply`` reaches the **MX AO arc
+child** through ``vin-supply`` -- an edge no other consumer in the tree walks,
+because GCC is the only driver that asks for a ``vdd_cx_ao`` rail at all
+(``dispcc``/``camcc``/``gpucc``/``videocc``/``scc`` request ``vdd_cx``, and
+``dispcc`` proved the point: it took the same ARC parent and one of the same two
+rails, and its probe ``returned 0 after 6822 usecs`` in the same window, at
+which point the MX AO edge was still unresolved).  So the fix is in the board
+DTS: ``&gcc { vdd_cx_ao-supply = <&VDD_CX_LEVEL>; }``, i.e. vote the always-on
+CX class through the CX rail that resolves, and keep the whole MX-AO sub-tree
+out of the path the boot device depends on.  For a level vote that is not a
+loss of capability -- AO versus NAPM selects which RPMh TCS carries the write
+(whether AOSD holds the vote across sleep), and CX is not power-collapsible
+anywhere in this bring-up path (``cpuidle.off=1``, and OSI is refused by the
+firmware: "psci: failed to set PC mode: -3").  The regulator core takes the
+maximum of the two classes' requests, so nothing can end up under-voted.  The
+workflow asserts the equality on the flashed DTB so the AO edge cannot creep
+back in.
+
+Two follow-ups this capture dictates.  ``surya_chain_task`` now exists so the
+watchdog dumps the lock *holder* as well as the waiter, because a waiter's
+stack alone can name a device but not the function that sleeps in it.  And the
+snapshot line ``supplier phys[0] -> ufsphy_mem available:1 device:1 driver:0``
+is the reason the phy stays unbound: once GCC registers, the host binds, the
+phy's ``resets`` supplier gains a driver and the next deferred pass takes both
+-- no extra retry is needed for the cycle, which is what the
+"Fixed dependency cycle(s)" notices have been saying about this pair all along.

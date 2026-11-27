@@ -111,11 +111,38 @@ static void __device_set_deferred_probe_reason(const struct device *dev, char *r
  *  - name the device the pass is inside and dump that worker's stack, so the
  *    next capture identifies the sleeping driver rather than guessing it from
  *    the last line before the silence.
+ *
+ * All three were needed and they worked as designed, per the next capture
+ * (console-ramoops-10.txt): the chain bound /soc/rsc@18200000 and every
+ * interconnect provider, the waits expired instead of hanging, and Android's
+ * first stage finally ran -- "Freeing unused kernel memory" at 25.445s,
+ * "Run /init as init process", "init first stage started!", then
+ * "partition(s) not found ... metadata, super, vbmeta_system" and
+ * "Kernel panic - not syncing: Attempted to kill init! exitcode=0x00007f00"
+ * (init's 127 after its own 10 s partition poll).  No block device exists
+ * because the one device the chain could not finish is still holding it: the
+ * chain printed "r0 probing /soc/clock-controller@100000" at 1.257457s and
+ * never printed the result, and the pass was still queueing on that device
+ * mutex at 21.475s.  So gcc_sm6150_probe() sleeps with the device lock held,
+ * which is a device-tree problem (its mandatory vdd_cx_ao rail, see
+ * arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dts), not a driver-core one;
+ * the chain stays as-is because it is what makes first stage reachable while
+ * individual providers get fixed.
  */
 static bool surya_bringup;
 static char surya_attempt[96] = "idle";
 static struct task_struct *surya_attempt_task;
 static atomic_t surya_attempt_busy = ATOMIC_INIT(0);
+/*
+ * The chain thread is normally the *holder* of the device mutex the serial pass
+ * is queueing behind, so the pass only shows where it waits and the chain shows
+ * why.  Both are needed: capture 10 named /soc/clock-controller@100000 as the
+ * device everything hung on, but not the function that sleeps, because only the
+ * waiting stack was printed.
+ */
+static struct task_struct *surya_chain_task;
+static bool surya_chain_settled;
+static char surya_chain_at[96] = "idle";
 
 static void surya_attempt_begin(struct device *dev)
 {
@@ -621,6 +648,17 @@ static void surya_wedge_watchdog(struct work_struct *work)
 			sched_show_task(surya_attempt_task);
 		surya_snapshot();
 	}
+	/* The chain, separately: blocked in a probe, settled, or never started. */
+	if (READ_ONCE(surya_chain_task)) {
+		pr_notice("Surya bringup: provider chain blocked in %s\n",
+			  surya_chain_at);
+		sched_show_task(READ_ONCE(surya_chain_task));
+	} else if (!surya_chain_settled) {
+		pr_notice("Surya bringup: provider chain has not reached a probe\n");
+	} else {
+		pr_notice("Surya bringup: provider chain settled at %s\n",
+			  surya_chain_at);
+	}
 	if (++rounds < 6)
 		queue_delayed_work_on(1, system_long_wq, &surya_wedge_work,
 				      20 * HZ);
@@ -652,7 +690,6 @@ static const char * const surya_chain[] = {
 };
 
 static DECLARE_COMPLETION(surya_chain_done);
-static char surya_chain_at[96] = "idle";
 
 static int surya_chain_thread(void *unused)
 {
@@ -680,6 +717,7 @@ static int surya_chain_thread(void *unused)
 			} else {
 				snprintf(surya_chain_at, sizeof(surya_chain_at),
 					 "%s", surya_chain[i]);
+				WRITE_ONCE(surya_chain_task, current);
 				pr_notice("Surya bringup: r%d probing %s\n",
 					  round, surya_chain[i]);
 				bus_probe_device(&pdev->dev);
@@ -699,6 +737,8 @@ static int surya_chain_thread(void *unused)
 	if (time_after_eq(jiffies, deadline))
 		pr_notice("Surya bringup: provider chain out of time at %s\n",
 			  surya_chain_at);
+	WRITE_ONCE(surya_chain_task, NULL);
+	surya_chain_settled = true;
 	surya_snapshot();
 	snprintf(surya_chain_at, sizeof(surya_chain_at), "done");
 	pr_notice("Surya bringup: provider chain pass finished\n");

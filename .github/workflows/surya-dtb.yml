@@ -1041,6 +1041,17 @@ jobs:
             echo '::error::Surya must not chase the SDMMagpie aggre2 block at 0x1700000'
             exit 1
           fi
+          # GCC must resolve its always-on CX class through the rail that is
+          # provably resolvable (the one dispcc probes with in 6.8 ms).  If the
+          # AO arc child comes back here, /soc/ufshc@1d84000 goes back to
+          # waiting on a clock provider that never finishes registering.
+          gcc_node=/soc/clock-controller@100000
+          cx=$(fdtget -t x dtb "$gcc_node" vdd_cx-supply | tr -d '[:space:]')
+          cx_ao=$(fdtget -t x dtb "$gcc_node" vdd_cx_ao-supply | tr -d '[:space:]')
+          if [ -z "$cx" ] || [ "$cx_ao" != "$cx" ]; then
+            printf '::error::Surya GCC vdd_cx_ao-supply must equal vdd_cx-supply (got %s, want %s) or gcc_sm6150_probe() blocks on the MX AO arc child and UFS never probes\n' "$cx_ao" "$cx"
+            exit 1
+          fi
           test "$(fdtget -t s dtb "$host" reset-names)" = rst
           test "$(fdtget -t s dtb "$host" pinctrl-names)" = 'dev-reset-assert dev-reset-deassert'
           test "$(fdtget -t s dtb "$host" interconnect-names)" = 'ufs-ddr cpu-ufs'
