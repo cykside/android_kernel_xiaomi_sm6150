@@ -21,20 +21,18 @@
 
 &reserved_memory {
 	/*
-	 * Keep the 4 MiB region no-map so nothing else claims it, but hand
-	 * every prz size to zero: with no zones the ramoops driver never
-	 * binds, so this kernel cannot zap or re-ECC the earlycon ring it
-	 * owns at 0x9d900000.  All printk output, including panics, flows
-	 * through the bootconsole into that ring for the whole lifetime of
-	 * the boot, and the recovery kernel (whose own DT still declares
-	 * the 4.14-era prz layout) exports it as console-ramoops-0.
+	 * Preserve the 4.14 pstore layout: the real pstore console (not a
+	 * hand-rolled earlycon header) is what the recovery's 4.14 ramoops
+	 * reader exports reliably.  The November capture that produced the
+	 * only complete boot log ran exactly with these sizes; every
+	 * zero-owned variant captured nothing.
 	 */
 	ramoops@9d800000 {
 		compatible = "ramoops";
 		reg = <0x0 0x9d800000 0x0 0x00400000>;
-		record-size = <0x0>;
-		pmsg-size = <0x0>;
-		console-size = <0x0>;
+		record-size = <0x80000>;
+		pmsg-size = <0x200000>;
+		console-size = <0x100000>;
 		ecc-size = <0x10>;
 		max-reason = <4>;
 	};

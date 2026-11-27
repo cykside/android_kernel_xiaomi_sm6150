@@ -1232,16 +1232,17 @@ aborts, ``qcom_icc_rpmh_config_qos`` -> regmap read -> synchronous
 external abort -> panic+5s reboot; log3's era predates skip-qos and
 is not the current failure).
 
-Pre-earlycon triage breadcrumbs
--------------------------------
+Reversion to the proven capture configuration (v6.1.177-c)
+------------------------------------------------------------
 
-With the dprz channel live (no "invalid buffer" report and no export at
-all proved the current images die before parse\_earlycon while still
-dying through a PS_HOLD-class panic reboot), ``start_kernel`` itself
-now writes complete persistent_ram records into the second legacy dump
-prz (``0x9d880000``, outside the ring window): ``SURYA-CRUMB
-BOOT-ENTRY`` before ``setup_arch`` and ``ARCH-DONE`` after it.  The
-recovery exports them as ``dmesg-ramoops-1`` even when the boot console
-never registers, splitting the death window into decompressor,
-setup\_arch, or post-setup.  Remove the two ``surya_boot_canary()``
-call sites in init/main.c once booting works.
+All dprz-smuggling variants (f63d61d4a ownership hand-over, zero-size
+przs, 91a6d3e29 dprz retarget, 7c05540e3 start_kernel breadcrumbs)
+were re-validated dead ends: the zero-size prz hand-over stopped the
+4.14 recovery reader from exporting anything, and the breadcrumb used
+early_ioremap() before arm64's ``early_fixmap_init()``, which panics
+in start_kernel on any device.  The capture configuration is now an
+exact reproduction of commit b6b0c60b4 (earlycon writer + pmsg-zone
+window 0x9da00000 + full 4.14 prz sizes in the DT), the only
+configuration ever shown to deliver a complete boot log from the real
+device; the boot-side changes since then (skip-qos guard, RPMh
+propagation, UFS unwind) are kept.

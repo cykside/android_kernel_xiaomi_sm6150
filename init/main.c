@@ -1070,9 +1070,6 @@ early_param("android_arch_task_struct_size", task_struct_vendor_size_setup);
 
 asmlinkage __visible void __init __no_sanitize_address start_kernel(void)
 {
-	/* Surya bring-up breadcrumb #1: decompressor + C entry reached. */
-	extern void __init surya_boot_canary(bool arch_stage);
-	surya_boot_canary(false);
 	char *command_line;
 	char *after_dashes;
 
@@ -1098,9 +1095,6 @@ asmlinkage __visible void __init __no_sanitize_address start_kernel(void)
 #endif
 	early_security_init();
 	setup_arch(&command_line);
-
-	/* Surya bring-up breadcrumb #2: setup_arch survived. */
-	surya_boot_canary(true);
 	setup_boot_config();
 	setup_command_line(command_line);
 	setup_nr_cpu_ids();
