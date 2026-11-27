@@ -15,8 +15,15 @@ collect() {
   local dir src count;
   dir=$(mktemp -d "$1/surya-boot-logs.XXXXXX") || return 1;
   count=0;
+  # Some recovery builds leave the pstore filesystem unmounted.
+  # Mounting it does not write Boot, DTBO or erase persistent records.
+  if ! grep -q ' /sys/fs/pstore pstore ' /proc/mounts; then
+    mount -t pstore -o ro pstore /sys/fs/pstore > "$dir/pstore-mount.txt" 2>&1;
+  fi;
+  grep ' /sys/fs/pstore ' /proc/mounts >> "$dir/pstore-mount.txt";
+  ls -la /sys/fs/pstore >> "$dir/pstore-mount.txt" 2>&1;
   for src in /sys/fs/pstore/dmesg-ramoops-* /sys/fs/pstore/console-ramoops-* /sys/fs/pstore/pmsg-ramoops-* /sys/fs/pstore/ftrace-ramoops-*; do
-    [ -f "$src" ] || continue;
+    [ -s "$src" ] || continue;
     if cp "$src" "$dir/${src##*/}"; then count=$((count + 1)); fi;
   done;
   if cat /proc/last_kmsg > "$dir/last_kmsg.txt" 2>/dev/null && [ -s "$dir/last_kmsg.txt" ]; then
