@@ -894,12 +894,12 @@ jobs:
           aggre=/soc/interconnect@16e0000
           test "$(fdtget -t s dtb /soc/clock-controller@100000 compatible)" = 'xiaomi,surya-gcc qcom,sm6150-gcc syscon'
           test "$(fdtget -t x dtb "$aggre" reg)" = '16e0000 11080'
-          phy_properties=$(fdtget -p dtb "$phy")
           aggre_properties=$(fdtget -p dtb "$aggre")
-          if grep -qx resets <<< "$phy_properties" || grep -qx clocks <<< "$aggre_properties"; then
-            echo '::error::Surya trial DTB retained an inherited PHY reset or QoS clock'
+          if grep -qx clocks <<< "$aggre_properties"; then
+            echo '::error::Surya trial DTB retained inherited Aggre1 QoS clocks'
             exit 1
           fi
+          test "$(fdtget -t x dtb "$phy" resets)" = "$(fdtget -t x dtb "$host" phandle) 0"
           grep -qx qcom,skip-qos <<< "$aggre_properties"
           rsc=/soc/rsc@18200000
           voter=$rsc/drv@2/bcm_voter

@@ -31,11 +31,9 @@
 	/delete-property/ qcom,iommu-dma;
 };
 
-/* FSociety leaves the controller reset on the host, not on the PHY. */
-&ufsphy_mem {
-	/delete-property/ resets;
-};
-
+/* Keep the QMP v3 reset link: legacy 4.14 toggles the same host
+ * soft reset around PHY calibration without using a DT phandle.
+ */
 /* Keep this persistent region out of the linear RAM mapping for earlycon. */
 &{/reserved-memory/ramoops@9d800000} {
 	no-map;
