@@ -113,7 +113,7 @@ int qcom_icc_set(struct icc_node *src, struct icc_node *dst)
 	struct icc_node *node;
 	struct qcom_icc_node *qn;
 	u64 clk_rate;
-	int i, ret;
+	int i, ret, first_err = 0;
 
 	if (!src)
 		node = dst;
@@ -161,10 +161,13 @@ int qcom_icc_set(struct icc_node *src, struct icc_node *dst)
 		}
 	}
 
-	for (i = 0; i < qp->num_voters; i++)
-		qcom_icc_bcm_voter_commit(qp->voters[i]);
+	for (i = 0; i < qp->num_voters; i++) {
+		ret = qcom_icc_bcm_voter_commit(qp->voters[i]);
+		if (ret && !first_err)
+			first_err = ret;
+	}
 
-	return 0;
+	return first_err;
 }
 EXPORT_SYMBOL_GPL(qcom_icc_set);
 
