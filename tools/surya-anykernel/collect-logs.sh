@@ -37,10 +37,10 @@ collect() {
   # Grab the raw window while still in recovery if that is possible.
   if [ -r /dev/mem ]; then
     if dd if=/dev/mem of="$dir/early-raw.bin" bs=4096 \
-         skip=$((0x9da00000 / 4096)) count=$((0x40000 / 4096)) 2>/dev/null &&
+         skip=$((0x9d900000 / 4096)) count=$((0x40000 / 4096)) 2>/dev/null &&
        [ -s "$dir/early-raw.bin" ]; then
       count=$((count + 1));
-      printf 'raw earlycon window 0x9da00000+0x40000 captured\n' > "$dir/early-raw.txt";
+      printf 'raw earlycon window 0x9d900000+0x40000 captured\n' > "$dir/early-raw.txt";
     else
       rm -f "$dir/early-raw.bin";
       printf 'dd /dev/mem failed\n' > "$dir/early-raw.txt";

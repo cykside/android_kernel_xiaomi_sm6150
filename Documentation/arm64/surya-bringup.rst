@@ -1163,3 +1163,17 @@ xor checksum).  The collector also raw-dumps the window through
 rebuilds the record from the anchor when the base header was zapped.
 An anchor that exists with a zero length still proves the kernel reached
 parse_earlycon, which separates a dead kernel from a dead log.
+
+Channel switch (no /dev/mem in TWRP)
+-----------------------------------
+
+The official recovery exposes no readable ``/dev/mem``, so a raw window
+dump is not an option there.  The pmsg prz, in contrast, is not declared
+by the recovery kernel at all: pmsg-ramoops files can never appear even
+when the ring is intact.  The only zone the TWRP ramoops driver both
+maps and exports is the console prz, and 4.14-era captures prove its
+records survive into a recovery mount.  The earlycon therefore targets
+``0x9d900000`` with the full 1 MiB console zone size so block and header
+parity land exactly where the 4.14 reader computes them
+(``0x9d9e38f0`` and ``0x9d9ffff0``), and the driver resumes its ring
+from the anchor when its own ramoops probe zaps the header mid-boot.

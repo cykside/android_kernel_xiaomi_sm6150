@@ -10,9 +10,11 @@
  *   earlycon=ramoops,<phys addr of the zone>[,<window size>[,<ECC zone size>]]
  *
  * The window size defaults to 256K, the most a single early_ioremap() can
- * map. Use a zone that nothing else writes to early, e.g. the pmsg zone.
- * Specify the full zone size only when its layout uses 16 ECC bytes
- * per 128-byte block, as configured on Surya.
+ * map. Point it at a zone the recovery kernel actually exports: on
+ * Surya that is the ramoops console prz (recovery DTs commonly omit a
+ * pmsg prz).  Specify the full zone size (the DT console-size) so the
+ * block parity is written where the existing reader computes it, with
+ * 16 ECC bytes per 128-byte block.
  */
 
 #include <linux/console.h>
@@ -141,6 +143,24 @@ static void earlycon_ramoops_write(struct console *con, const char *s,
 
 	start = readl_relaxed(&rbuf->start);
 	size = readl_relaxed(&rbuf->size);
+	if (!start && !size && ranchor) {
+		/*
+		 * A ramoops probe on this very boot may have zapped the
+		 * prz header.  Resume from the anchor so the early text is
+		 * kept and the ring continues where it stopped.
+		 */
+		u32 as = readl_relaxed(&ranchor->start);
+		u32 al = readl_relaxed(&ranchor->size);
+		u32 ag = readl_relaxed(&ranchor->generation);
+		u32 ac = readl_relaxed(&ranchor->csum);
+
+		if (readl_relaxed(&ranchor->sig) == EARLYCON_ANCHOR_SIG &&
+		    ac == (EARLYCON_ANCHOR_SIG ^ ag ^ as ^ al) &&
+		    al && al <= rbuf_size && as < rbuf_size) {
+			start = as;
+			size = al;
+		}
+	}
 	if (start >= rbuf_size || size > rbuf_size)
 		return;
 	while (n--) {
