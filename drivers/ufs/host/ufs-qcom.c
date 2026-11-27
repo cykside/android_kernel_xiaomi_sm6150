@@ -2224,7 +2224,6 @@ static void ufs_qcom_enable_crash_on_err(struct ufs_hba *hba)
 
 static int ufs_qcom_bus_register(struct ufs_qcom_host *host)
 {
-	int err = 0;
 	struct device *dev = host->hba->dev;
 	struct qcom_bus_scale_data *qsd;
 
@@ -2249,16 +2248,27 @@ static int ufs_qcom_bus_register(struct ufs_qcom_host *host)
 	host->bus_vote.min_bw_vote = ufs_qcom_get_bus_vote(host, "MIN");
 	host->bus_vote.max_bw_vote = ufs_qcom_get_bus_vote(host, "MAX");
 
+	return 0;
+}
+
+static void ufs_qcom_bus_init_sysfs(struct ufs_qcom_host *host)
+{
+	struct device *dev = host->hba->dev;
+	int err;
+
+	if (!host->qbsd)
+		return;
+
 	host->bus_vote.max_bus_bw.show = show_ufs_to_mem_max_bus_bw;
 	host->bus_vote.max_bus_bw.store = store_ufs_to_mem_max_bus_bw;
 	sysfs_attr_init(&host->bus_vote.max_bus_bw.attr);
 	host->bus_vote.max_bus_bw.attr.name = "max_bus_bw";
 	host->bus_vote.max_bus_bw.attr.mode = 0644;
 	err = device_create_file(dev, &host->bus_vote.max_bus_bw);
-	if (err)
-		dev_err(dev, "Error: (%d) Failed to create sysfs entries\n",
-			err);
-	return 0;
+	if (err) {
+		host->bus_vote.max_bus_bw.attr.name = NULL;
+		dev_err(dev, "Error: (%d) Failed to create sysfs entries\n", err);
+	}
 }
 
 static void ufs_qcom_dev_ref_clk_ctrl(struct ufs_qcom_host *host, bool enable)
@@ -4025,6 +4035,7 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 			dev_err(host->hba->dev, "Fail to register UFS panic notifier\n");
 	}
 
+	ufs_qcom_bus_init_sysfs(host);
 	return 0;
 
 out_disable_parent_vreg:
@@ -4044,6 +4055,9 @@ out_variant_clear:
 static void ufs_qcom_exit(struct ufs_hba *hba)
 {
 	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+
+	if (host->bus_vote.max_bus_bw.attr.name)
+		device_remove_file(hba->dev, &host->bus_vote.max_bus_bw);
 
 	ufs_qcom_disable_lane_clks(host);
 	ufs_qcom_phy_power_off(hba);
