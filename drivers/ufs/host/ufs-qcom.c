@@ -3884,8 +3884,14 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 		goto out_variant_clear;
 	}
 
-	err = ufs_qcom_parse_reg_info(host, "qcom,vddp-ref-clk",
-				      &host->vddp_ref_clk);
+	if (of_property_read_bool(dev->of_node, "qcom,vddp-ref-clk-supply")) {
+		err = ufs_qcom_parse_reg_info(host, "qcom,vddp-ref-clk",
+					      &host->vddp_ref_clk);
+		if (err) {
+			dev_err_probe(dev, err, "failed to get UFS reference clock supply\n");
+			goto out_variant_clear;
+		}
+	}
 
 	err = phy_init(host->generic_phy);
 	if (err) {
