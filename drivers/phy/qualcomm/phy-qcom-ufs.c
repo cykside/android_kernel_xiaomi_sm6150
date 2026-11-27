@@ -804,7 +804,7 @@ int ufs_qcom_phy_power_on(struct phy *generic_phy)
 		if (err) {
 			dev_err(dev, "%s enable vdda_qref failed, err=%d\n",
 				__func__, err);
-			goto out;
+			goto out_disable_gdsc;
 		}
 	}
 
@@ -812,7 +812,7 @@ int ufs_qcom_phy_power_on(struct phy *generic_phy)
 	if (err) {
 		dev_err(dev, "%s enable vdda_phy failed, err=%d\n",
 			__func__, err);
-		goto out;
+		goto out_disable_qref;
 	}
 
 	phy_common->phy_spec_ops->power_control(phy_common, true);
@@ -859,7 +859,14 @@ out_disable_iface_clk:
 out_disable_pll:
 	ufs_qcom_phy_disable_vreg(dev, &phy_common->vdda_pll);
 out_disable_phy:
+	phy_common->phy_spec_ops->power_control(phy_common, false);
 	ufs_qcom_phy_disable_vreg(dev, &phy_common->vdda_phy);
+out_disable_qref:
+	if (phy_common->vdda_qref.reg)
+		ufs_qcom_phy_disable_vreg(dev, &phy_common->vdda_qref);
+out_disable_gdsc:
+	if (phy_common->vdd_phy_gdsc.reg)
+		ufs_qcom_phy_disable_vreg(dev, &phy_common->vdd_phy_gdsc);
 out:
 	return err;
 }
