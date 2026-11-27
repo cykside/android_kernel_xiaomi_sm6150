@@ -61,15 +61,50 @@ def decode(raw):
     return data[cursor:] + data[:cursor]
 
 
+def scan(blob):
+    """Find earlycon anchors inside an arbitrary raw region dump."""
+    for off in range(0, len(blob) - 20, 4):
+        sig, cursor, length, gen, csum = struct.unpack_from('<IIIII', blob, off)
+        if sig != ANCHOR_SIGNATURE or csum != (
+                ANCHOR_SIGNATURE ^ gen ^ cursor ^ length):
+            continue
+        if not length or length > CAPACITY or cursor >= CAPACITY:
+            continue
+        base = off - (WINDOW - 128)
+        if base < 0 or base + WINDOW > len(blob):
+            continue
+        data = blob[base + 12:base + 12 + CAPACITY]
+        if len(data) < length:
+            continue
+        if length == CAPACITY and cursor < length:
+            yield base, data[cursor:length] + data[:cursor]
+        elif cursor in (0, length):
+            yield base, data[:length]
+        else:
+            yield base, data[length - cursor:length] + data[:length - cursor]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('dump', type=Path)
+    parser.add_argument('--scan', action='store_true',
+                        help='search a larger raw region dump for anchors')
     args = parser.parse_args()
-    try:
-        log = decode(args.dump.read_bytes())
-    except (OSError, ValueError) as exc:
-        parser.exit(1, f'{exc}\n')
-    sys.stdout.buffer.write(log)
+    blob = args.dump.read_bytes()
+    if not args.scan and len(blob) == WINDOW:
+        try:
+            sys.stdout.buffer.write(decode(blob))
+        except ValueError as exc:
+            parser.exit(1, f'{exc}\n')
+        return
+    found = False
+    for base, log in scan(blob):
+        found = True
+        sys.stdout.buffer.write(f'--- anchor at region+0x{base:x} '
+                                f'(phys base guess) ---\n'.encode())
+        sys.stdout.buffer.write(log)
+    if not found:
+        parser.exit(1, 'no valid earlycon anchor in region dump\n')
 
 
 if __name__ == '__main__':

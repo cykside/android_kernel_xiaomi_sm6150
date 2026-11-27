@@ -34,20 +34,32 @@ collect() {
   # pstore can show empty even with the ring data intact in RAM: a
   # ramoops driver may have zapped the 12-byte header cursor while the
   # earlycon anchor at the far end of the window still carries it.
-  # Grab the raw window while still in recovery if that is possible.
-  if [ -r /dev/mem ]; then
-    if dd if=/dev/mem of="$dir/early-raw.bin" bs=4096 \
-         skip=$((0x9d900000 / 4096)) count=$((0x40000 / 4096)) 2>/dev/null &&
-       [ -s "$dir/early-raw.bin" ]; then
-      count=$((count + 1));
-      printf 'raw earlycon window 0x9d900000+0x40000 captured\n' > "$dir/early-raw.txt";
-    else
-      rm -f "$dir/early-raw.bin";
-      printf 'dd /dev/mem failed\n' > "$dir/early-raw.txt";
-    fi;
-  else
-    printf 'no readable /dev/mem in this recovery\n' > "$dir/early-raw.txt";
+  # Recovery images often omit the /dev/mem node without disabling
+  # DEVMEM itself, so create one when it is missing.  Then dump the
+  # whole 4 MiB ramoops region; the decoder scans it for either the
+  # prz header or the earlycon anchor wherever they landed.
+  memnode=/dev/mem;
+  if [ ! -r "$memnode" ]; then
+    mknod /dev/mem c 1 1 2>/dev/null || mknod "$dir/mem" c 1 1 2>/dev/null;
+    [ -r "$memnode" ] || memnode="$dir/mem";
   fi;
+  if [ -r "$memnode" ]; then
+    if dd if="$memnode" of="$dir/ramoops-region.raw" bs=4096 \
+         skip=$((0x9d800000 / 4096)) count=$((0x400000 / 4096)) 2>/dev/null &&
+       [ -s "$dir/ramoops-region.raw" ]; then
+      count=$((count + 1));
+      printf 'raw ramoops region 0x9d800000+0x400000 captured\n' > "$dir/early-raw.txt";
+    else
+      rm -f "$dir/ramoops-region.raw";
+      printf 'dd from %s failed\n' "$memnode" > "$dir/early-raw.txt";
+    fi;
+    printf 'kallsyms DEVMEM probe:\n' >> "$dir/early-raw.txt";
+    grep -c devmem /proc/kallsyms >> "$dir/early-raw.txt" 2>&1 || true;
+  else
+    printf 'no /dev/mem even after mknod (CONFIG_DEVMEM off)\n' > "$dir/early-raw.txt";
+  fi;
+  ls -l /dev/mem >> "$dir/early-raw.txt" 2>&1;
+  dmesg 2>/dev/null | grep -iE 'ramoops|pstore|persistent_ram|devmem' > "$dir/twrp-pstore-facts.txt" 2>&1;
   dmesg > "$dir/twrp-current-dmesg.txt" 2>/dev/null;
   printf 'Previous boot files copied: %s\ntwrp-current-dmesg.txt is from recovery, not the failed kernel.\n' "$count" > "$dir/README.txt";
   sync;
