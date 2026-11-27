@@ -364,7 +364,10 @@ jobs:
               else if ($2 == phy) p++;
               else {print; unexpected++}
             }
-            END {exit (unexpected || h != 4 || p != 2)}
+            # vdd-hba-supply intentionally absent: the UFS GDSC stays in
+            # its bootloader-enabled state and the raw-offset vendor GDSC
+            # regulator must not probe (SError).  Three host supplies.
+            END {exit (unexpected || h != 3 || p != 2)}
           ' "$RUNNER_TEMP/surya-ufs-test.txt"
 
       - name: Build the minimal-symbol Surya overlay base (offline only)
