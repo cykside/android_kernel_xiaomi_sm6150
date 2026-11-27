@@ -390,7 +390,7 @@ static const char * const surya_storage_paths[] = {
 	"/soc/rsc@18200000/drv@2/clock-controller",
 	"/soc/rsc@18200000/drv@2/rpmh-regulator-ldoa19",
 	"/soc/rsc@18200000/drv@2/rpmh-regulator-ldoa12",
-	"/soc/rsc@18200000/drv@2/rpmh-regulator-ldoa13",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-ldoc3",
 	"/soc/rsc@18200000/drv@2/rpmh-regulator-ldoa4",
 };
 

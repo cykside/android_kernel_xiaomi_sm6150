@@ -336,8 +336,26 @@ jobs:
             printf '### Available shared UFS supply references (%s)\n\n' "$count"
             printf '\x60\x60\x60text\n%s\n\x60\x60\x60\n' "$shared"
           } >> "$GITHUB_STEP_SUMMARY"
-          for voltage in 2944000 1696000 824000 1144000; do
-            grep -Fx "    qcom,init-voltage: $voltage" "$RUNNER_TEMP/surya-integration-ufs.txt"
+          # Neither UFS node may hold a regulator phandle: the RPMh VRM LDOs
+          # are registered as class devices, so their child nodes never become
+          # the supplier device fw_devlink waits on and both UFS nodes were
+          # parked "enabled; unbound" behind them.
+          for ref in '  vdd-hba-supply: absent' '  vcc-supply: absent' \
+                     '  vccq2-supply: absent' '  qcom,vddp-ref-clk-supply: absent' \
+                     '  vdda-phy-supply: absent' '  vdda-pll-supply: absent'; do
+            if ! grep -Fqx "$ref" "$RUNNER_TEMP/surya-integration-ufs.txt"; then
+              printf '::error::Surya UFS still references a RPMh regulator (%s)\n' "$ref"
+              exit 1
+            fi
+          done
+          # The audit fixture keeps the rail descriptions for whoever binds
+          # them later, so verify the overrides where they now live.
+          for rail in 'rpmh-regulator-ldoa19/regulator-pm6150-l19 2944000' \
+                      'rpmh-regulator-ldoa12/regulator-pm6150-l12 1696000' \
+                      'rpmh-regulator-ldoa4/regulator-pm6150-l4 824000' \
+                      'rpmh-regulator-ldoc3/regulator-pm6150l-l3 1144000'; do
+            read -r node voltage <<< "$rail"
+            test "$(fdtget -t u "$dtb" "/soc/rsc@18200000/drv@2/$node" qcom,init-voltage)" = "$voltage"
           done
 
       - name: Check the UFS integration fixture (not for flashing)
