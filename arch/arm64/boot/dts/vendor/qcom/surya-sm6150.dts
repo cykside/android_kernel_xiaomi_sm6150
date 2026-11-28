@@ -21,19 +21,70 @@
 
 &reserved_memory {
 	/*
-	 * Preserve the 4.14 pstore layout: the real pstore console (not a
-	 * hand-rolled earlycon header) is what the recovery's 4.14 ramoops
-	 * reader exports reliably.  The November capture that produced the
-	 * only complete boot log ran exactly with these sizes; every
-	 * zero-owned variant captured nothing.
+	 * pstore geometry, derived from what the two kernels that touch this
+	 * region actually do -- not guessed.
+	 *
+	 * Stock 4.14 (arch/arm64/boot/dts/qcom/sdmmagpie.dtsi:669, the DT the
+	 * recovery inherits) declares reg = <0x9d800000 0x400000>, record-size
+	 * 0x80000, pmsg-size 0x200000, console-size 0x100000, ecc-size 0x10.
+	 * Both the 4.14 and the 6.1 ramoops driver lay przs out in one fixed
+	 * order -- dmesg, console, ftrace, pmsg -- and give the dmesg set the
+	 * whole leftover:
+	 *
+	 *	dump_mem_sz = mem_size - console - ftrace - pmsg
+	 *	cnt         = dump_mem_sz / record-size
+	 *	zone_sz     = dump_mem_sz / cnt		(align_down 2)
+	 *
+	 * so stock resolves to dmesg przs at 0x9d800000 and 0x9d880000 (0x80000
+	 * each), console at 0x9d900000, pmsg at 0x9da00000.  The capture lives or
+	 * dies on that map, because the recovery reads it and 4.14 destroys what
+	 * it does not like (fs/pstore/ram_core.c of that kernel):
+	 *
+	 *	if (buffer_size(prz) > prz->buffer_size ||
+	 *	    buffer_start(prz) > buffer_size(prz))
+	 *			pr_info("found existing invalid buffer, ...");
+	 *	...
+	 *	prz->buffer->sig = sig;
+	 *	persistent_ram_zap(prz);		-- the log is gone --
+	 *
+	 * which is verbatim the report this round: "found existing invalid buffer,
+	 * size 57821, start 192977" next to an empty /sys/fs/pstore.
+	 *
+	 * So the boot console's zone -- 0x9da00000, from
+	 * earlycon=ramoops,0x9da00000,0x40000 -- is made (a) the 6.1 *console*
+	 * prz, so the handover to pstore continues the same ring instead of
+	 * fighting over one 12-byte header, and (b) a zone the recovery reaches
+	 * through its own pmsg prz, whose capacity (0x200000) is far larger than
+	 * anything we write there, so its two checks can only pass.  console-size
+	 * 0x40000 matches one early_ioremap() and the earlycon ring exactly, and
+	 * record-size 0x80000 keeps every dmesg prz at the size the recovery
+	 * expects for its own dmesg przs, so a panic record survives too.
+	 * Solving the two formulas for a console prz at base + 0x200000 with
+	 * 0x80000 records gives mem_size 0x240000, cnt 4, zone_sz 0x80000:
+	 * 4 x 0x80000 = 0x200000, then console 0x9da00000..0x9da40000 = the end
+	 * of reg.  Nothing is left for pmsg or ftrace -- and pmsg-size must stay
+	 * 0 for the reason the old node got wrong: it parked a *second* writer
+	 * (capacity 0x200000) on the earlycon's header, so each writer clamped
+	 * "size" to a different maximum and the pair read start > size.  192977 is
+	 * a start the earlycon can never produce on its own.
+	 *
+	 * ecc-size 0 as well: prz->buffer_size is zone - 12 - ecc
+	 * (fs/pstore/ram_core.c:523) while earlycon-ramoops.c uses zone - 12, so
+	 * the two owners of one header only agree on capacity without ECC -- and
+	 * the reader in the recovery has none either, which its own boot line
+	 * states: "ramoops: attached 0x400000@0x9d800000, ecc: 0/0".
+	 *
+	 * no-map, like the other no-cache regions in this node: a cached alias of
+	 * a zone written through ioremap() is a capture that can read back stale.
 	 */
 	ramoops@9d800000 {
 		compatible = "ramoops";
-		reg = <0x0 0x9d800000 0x0 0x00400000>;
+		no-map;
+		reg = <0x0 0x9d800000 0x0 0x00240000>;
 		record-size = <0x80000>;
-		pmsg-size = <0x200000>;
-		console-size = <0x100000>;
-		ecc-size = <0x10>;
+		pmsg-size = <0x0>;
+		console-size = <0x40000>;
+		ecc-size = <0x0>;
 		max-reason = <4>;
 	};
 };
@@ -229,32 +280,42 @@
  */
 &ufsphy_mem {
 	/*
-	 * The "qcom,ufs-phy-qmp-v3" that used to be here is why storage could
-	 * never work, and capture 13 named it: the snapshot printed
-	 * "/soc/ufsphy_mem@1d87000 enabled; unbound" plus "can_match: 0", which is
-	 * what the driver core reports when no *built* driver's of_match_table
-	 * contains the node's compatible string.  No file in this tree matches
-	 * that one -- phy-qcom-ufs-qmp-v3.c does, but it is gated on
-	 * CONFIG_PHY_QCOM_UFS_V3_SM4350 (SM4350, not us), and what
-	 * CONFIG_PHY_QCOM_UFS_V3 actually builds is the SDM660 driver, which
-	 * matches "qcom,ufs-phy-qmp-v3-660".  SM6150's UFS PHY is QMP v4 (7nm, per
-	 * its own Kconfig help), so the string has to be the one
-	 * phy-qcom-ufs-qmp-v4.c carries -- CONFIG_PHY_QCOM_UFS_V4, default-on
-	 * under PHY_QCOM_UFS, already set in the resolved config.
+	 * "qcom,ufs-phy-qmp-v3", because that is the string stock uses for this
+	 * silicon: arch/arm64/boot/dts/qcom/sdmmagpie.dtsi of the 4.14 source -- the
+	 * kernel that boots this board off UFS today -- gives &ufsphy_mem exactly
+	 * that compatible, and drivers/phy/qualcomm/phy-qcom-ufs-qmp-v4.c carries a
+	 * different PHY revision's calibration.  Counting the {register, value}
+	 * pairs of the tables says the same thing: stock's phy-qcom-ufs-qmp-v3.h has
+	 * 88, this tree's phy-qcom-ufs-qmp-v3.h reproduces all 88,
+	 * phy-qcom-ufs-qmp-v4.h 33 and phy-qcom-ufs-qmp-v3-660.h 27.  Binding V4
+	 * meant two thirds of the QSERDES/PA trim registers were written for another
+	 * PHY -- a link that never trains, which is the silence this board keeps
+	 * producing.
 	 *
-	 * Nothing else about the node needs changing: it is already exactly what
-	 * that driver asks for.  reg-names = "phy_mem" feeds its
+	 * An earlier round put "qcom,ufs-phy-qmp-v4" here for a defensible but
+	 * wrong reason: capture 13 showed the node "enabled; unbound" with
+	 * "can_match: 0", and no *built* driver matched "qcom,ufs-phy-qmp-v3" --
+	 * because in this tree that file sits behind CONFIG_PHY_QCOM_UFS_V3_SM4350,
+	 * whose Kconfig prompt ("UFS Holi Phy Driver") names the board that shipped
+	 * with it, not the PHY it drives.  The right move was to enable the symbol,
+	 * which arch/arm64/configs/vendor/surya.config now does; picking a driver
+	 * whose table does not match the silicon was not.  The workflow gate now
+	 * checks the compatible against the of_match tables of the drivers actually
+	 * built, so the label cannot outvote the hardware again.
+	 *
+	 * Nothing else about the node changes.  reg-names = "phy_mem" feeds
 	 * platform_get_resource_byname(), #phy-cells = <0> is what the host's
-	 * of_phy_simple_xlate() needs, and clock-names = "ref_clk_src", "ref_clk",
-	 * "ref_aux_clk" are the three names ufs_qcom_phy_init_clks() -- run from
-	 * this phy's .init -- looks up, with "tx_iface_clk"/"rx_iface_clk" already
-	 * optional.  Its vdda-phy/vdda-pll handling needed the -ENODATA tolerance
-	 * added in drivers/phy/qualcomm/phy-qcom-ufs.c, because the supply
-	 * properties must stay absent for the RPMh reason above; the "QMP v3 PHY
-	 * driver never asks for vdda-phy/vdda-pll" note below was true of the
-	 * driver we were not actually getting either way.
+	 * of_phy_simple_xlate() needs, clock-names = "ref_clk_src", "ref_clk",
+	 * "ref_aux_clk" are the three ufs_qcom_phy_init_clks() looks up from
+	 * .init, "tx_iface_clk"/"rx_iface_clk" stay optional, and resets =
+	 * <&ufshc_mem 0> is acquired by this driver's init path.  The vdda-phy and
+	 * vdda-pll supplies remain absent on purpose: the vendor rpmh-regulator
+	 * registers those LDOs without making the child node its primary fwnode
+	 * device, so a phandle here parks the consumer silently (see the note on
+	 * &ufshc_mem); the -ENODATA tolerance in drivers/phy/qualcomm/phy-qcom-ufs.c
+	 * is what lets the driver treat "no supply" as "rail already up".
 	 */
-	compatible = "qcom,ufs-phy-qmp-v4";
+	compatible = "qcom,ufs-phy-qmp-v3";
 	status = "disabled";
 };
 

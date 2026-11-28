@@ -1816,6 +1816,14 @@ driver is never queued for the deferred pass, never probed, and never reports a
 reason; it just stays unbound, which is why this looked like a dependency
 problem for three captures.
 
+.. note::
+
+   **Superseded.**  The paragraph below chose the PHY driver from this tree's
+   Kconfig help text and from what happened to be built, and both pointed at
+   QMP v4.  ``sdmmagpie.dtsi`` in the stock 4.14 source chooses
+   ``qcom,ufs-phy-qmp-v3`` for this SoC, and the calibration tables agree with
+   it; see the last section, which replaces the conclusion below.
+
 SM6150's UFS PHY is the 7nm QMP v4 block -- ``phy-qcom-ufs-qmp-v4.c``,
 ``CONFIG_PHY_QCOM_UFS_V4``, which ``PHY_QCOM_UFS`` defaults on and the resolved
 config already carried.  Its match string is ``"qcom,ufs-phy-qmp-v4"``, so the
@@ -2093,3 +2101,202 @@ Verified by replaying the real function against the real input: sourcing
 the exact input cmdline above reproduces the logged ``rcupdate.rcu_expedited=0``
 duplication and now ends with ``clk_ignore_unused softlockup_panic=1``, with both
 guards passing.  ``sh -n`` is clean and the workflow YAML parses.
+
+
+The capture died in the prz header, not in the kernel
+-----------------------------------------------------
+
+The 2026-11-27 20:16 install log is the first one that says something new, and it
+is worth reading in full before touching anything::
+
+    3510: CMDLINE ... reboot=warm panic=5 loglevel=8 rcupdate.rcu_expedited=0
+          fw_devlink=permissive cpuidle.off=1 clk_ignore_unused softlockup_panic=1
+    2163:   inflating: SURYA-VERSION
+    2224: Linux version 6.1.177-surya-ga5684c8d8572
+    2291: I:Updater process ended with RC=0
+
+``clk_ignore_unused`` and ``softlockup_panic=1`` are on the cmdline of the image
+the bootloader will use, and the new header guard let the flash through, so the
+installer fix from the previous round works.  The stamp is not a wrong zip
+either: ``a5684c8d8572`` is ``refs/pull/1/merge``, the synthetic commit GitHub
+builds a ``pull_request`` run from (head ``b2529a124`` + base ``4ae872acf``).
+``SURYA-VERSION`` now also carries ``head=<sha>`` so a report can be matched to a
+branch commit without that detour.
+
+What was still missing was not a kernel bug but a buffer the reader refuses::
+
+    total 0                                  # /sys/fs/pstore, twice
+    persistent_ram: found existing invalid buffer, size 57821, start 192977
+
+Those two numbers are the whole story.  This is the stock 4.14 reader, in the
+kernel the recovery runs (fs/pstore/ram_core.c of msm-4.14)::
+
+    if (buffer_size(prz) > prz->buffer_size ||
+        buffer_start(prz) > buffer_size(prz))
+            pr_info("found existing invalid buffer, size %zu, start %zu\n", ...);
+    else {
+            persistent_ram_save_old(prz);
+            return 0;
+    }
+    ...
+    prz->buffer->sig = sig;
+    persistent_ram_zap(prz);          /* the log is gone */
+
+57821 < 192977, so the zone was called invalid and *erased*.  Nothing was lost in
+the kernel: 57 KB of console text sat in DRAM the whole time, twice.
+
+Why two writers shared one header is answered by the stock DT rather than by this
+tree -- the reason to read a stock dump at all is that Fsociety is a modified
+kernel, so its DT is not the platform's.  Stock 4.14 puts in
+``arch/arm64/boot/dts/qcom/sdmmagpie.dtsi``::
+
+    ramoops_mem: ramoops@9d800000 {
+            compatible = "ramoops";
+            reg = <0x0 0x9d800000 0x0 0x00400000>;
+            record-size = <0x80000>;
+            pmsg-size = <0x200000>;
+            console-size = <0x100000>;
+            ecc-size = <0x10>;
+            max-reason = <0x4>;
+    };
+
+and both the 4.14 and the 6.1 driver lay przs out in one fixed order -- dmesg,
+console, ftrace, pmsg -- handing the dmesg set the entire leftover::
+
+    dump_mem_sz = mem_size - console_size - ftrace_size - pmsg_size
+    cnt         = dump_mem_sz / record-size
+    zone_sz     = dump_mem_sz / cnt          # leftover split evenly,
+                                             # *not* record-size
+
+so stock resolves to dmesg przs at 0x9d800000 and 0x9d880000, console at
+0x9d900000, **pmsg at 0x9da00000**.  Our node had been copied from those same
+numbers, and the earlycon had been pointed at 0x9da00000 -- straight onto the
+pmsg prz, a second owner of the same 12-byte header with a different capacity
+(0x1ffff4 against the earlycon's 0x3ffec).  Each writer clamps ``size`` to its own
+maximum, so a ``start`` of 192977 -- a value the earlycon can never reach -- came
+from one of them while ``size`` came from the other, and the recovery erased the
+pair.  The previous round's numbers (size 52101, start 52133, one record apart)
+were the same collision or a torn write; both are closed now.
+
+The new node is derived from those two facts instead of copied::
+
+    reg = <0x0 0x9d800000 0x0 0x00240000>;
+    record-size = <0x80000>;      /* 4 x 0x80000 = 0x200000, as stock */
+    console-size = <0x40000>;     /* lands at 0x9da00000 */
+    pmsg-size = <0x0>;            /* no second writer on that header */
+    ecc-size = <0x0>;
+    max-reason = <4>;
+    no-map;
+
+With mem_size 0x240000 the formulas give cnt 4 and zone_sz 0x80000, so the dmesg
+set fills 0x9d800000..0x9da00000 with przs exactly the size the recovery expects
+for its own dmesg records -- a panic log passes its check too -- and the console
+prz lands at 0x9da00000, which is both the address the earlycon already writes and
+the address of the recovery's pmsg prz, whose 0x200000 capacity is far above
+anything we put there, so both of its comparisons pass and it exports the text as
+``pmsg-ramoops-0``, which the collector already copies.  ``ecc-size 0`` is needed
+twice over: ``prz->buffer_size`` is ``zone - 12 - ecc`` (fs/pstore/ram_core.c:523)
+while the earlycon uses ``zone - 12``, so one header shared by both only makes
+sense without ECC -- and the recovery has none, which its own boot line says
+outright ("ramoops: attached 0x400000@0x9d800000, ecc: 0/0").  The sizes still
+have to *fit*: ``ramoops_init_prz()`` fails the whole probe with "no room for
+console mem region" if a prz runs past ``reg``, which is what a record-size of
+0x200000 inside the old 0x400000 region would have done (the single dmesg prz
+grows to ``zone_sz`` 0x3c0000 and pushes the console off the end).
+
+The other half is in ``earlycon-ramoops.c``.  The old writer pushed bytes and only
+then updated ``start`` and ``size``, so a reset between the two ``writel()`` calls
+tore the pair -- and 4.14 erases a torn zone.  ``fs/pstore`` does it the other way
+round (``buffer_size_add()`` before ``buffer_start_add()``) because ``size`` is a
+monotone watermark: publishing it first keeps ``start <= size`` true at every
+instant, for any reader, including one on another kernel with a different view of
+the region.  The boot console now updates the header before the payload, ``size``
+before ``start``, so a death inside a ``printk`` costs the tail of one record
+instead of the capture.
+
+Two gates hold this in place.  One re-derives the layout from the built DTB and the
+earlycon spec in ``boot-test.sh``, and fails if the console prz does not land on
+the earlycon's address, if the capacities differ, if ``ecc-size`` or
+``pmsg-size`` is non-zero, if the przs run past ``reg``, or if record-size and the
+earlycon address stop agreeing with the stock map quoted above.  The other pins
+the statement order inside ``earlycon_ramoops_write()`` (size, then start, then
+the payload), because this bug is invisible to a compiler and visible only in a
+flash log.
+
+
+The PHY revision was read off a Kconfig label instead of the board
+------------------------------------------------------------------
+
+Reading a stock dump pays off in exactly this kind of case.  The 4.14 kernel that
+boots a Surya from UFS today is not Fsociety's, and its DT says what the board
+needs without any interpretation::
+
+    /* stock arch/arm64/boot/dts/qcom/sdmmagpie.dtsi, from &ufsphy_mem in
+       sdmmagpie-idp.dtsi */
+    &ufsphy_mem {
+            compatible = "qcom,ufs-phy-qmp-v3";
+            vdda-phy-supply = <&pm6150_l4>;   /* 0.88v */
+            vdda-pll-supply = <&pm6150l_l3>;  /* 1.2v */
+            status = "ok";
+    };
+
+    &ufshc_mem {
+            vdd-hba-supply = <&ufs_phy_gdsc>;
+            vdd-hba-fixed-regulator;
+            vcc-supply = <&pm6150_l19>;
+            ...
+    };
+
+Two things came out of that.  The supplies are the part this tree cannot copy (the
+RPMh regulator devices never become the supplier fw_devlink waits for, which is
+what parked both nodes at 4.58 s in capture 13) and they stay out for that reason.
+The compatible is the part it must copy, and it had been changed.
+
+The reasoning that replaced it was reasonable and wrong.  Capture 13 printed
+``/soc/ufsphy_mem@1d87000 enabled; unbound`` with ``can_match: 0``, no built
+driver listed ``qcom,ufs-phy-qmp-v3``, and ``drivers/phy/qualcomm/Kconfig`` says
+the file behind ``CONFIG_PHY_QCOM_UFS_V3`` is the *SDM660* driver while the string
+we needed belongs to ``CONFIG_PHY_QCOM_UFS_V3_SM4350``, whose prompt reads "UFS
+Holi Phy Driver" and whose help says nothing about a PHY revision at all.  So the
+one 11nm-labelled symbol in the file (``PHY_QCOM_UFS_V3``, "Support for 11nm UFS
+QMP phy ... required to enable UFS on Sdmsteppe chipset") built the SDM660 driver,
+and ``PHY_QCOM_UFS_V4`` -- help "Support for 7nm UFS QMP phy", ``default
+PHY_QCOM_UFS`` so it is always on -- was the only prompt matching the tree's own
+board files.  The conclusion written up from that was "SM6150's UFS PHY is the 7nm
+QMP v4 block".  It is not: SM6150 is an 11nm part, ``qcom,ufs-phy-qmp-v3`` is what
+the DT of the kernel that boots it names, and a Kconfig prompt describes the
+*board* a file first shipped with, not the hardware inside the block.
+
+The tables settle it, and they are the only argument that matters because they are
+what gets written to the PHY.  Counting ``UFS_QCOM_PHY_CAL_ENTRY()`` pairs in the
+stock ``phy-qcom-ufs-qmp-v3.h`` gives 88; this tree's ``phy-qcom-ufs-qmp-v3.h``
+reproduces **88 of 88**, ``phy-qcom-ufs-qmp-v4.h`` 33 and
+``phy-qcom-ufs-qmp-v3-660.h`` 27.  Binding V4 therefore wrote roughly two thirds
+of the QSERDES/PA trim and calibration registers from another PHY revision --
+``UFS_PHY_POWER_DOWN_CONTROL``, ``QSERDES_COM_SYSCLK_EN_SEL``, the
+``BIAS_EN_CLKBUFLR_EN``/``BG_TIMER``/``LOCK_CMP`` set and the per-lane PA tables
+among them -- which does not fail a probe or print anything.  It leaves the
+receiver unable to lock, ``ufs_qcom_phy_calibrate()`` and the handshake on the
+host side keep waiting, and because the host is the *root device* on this board,
+everything after it -- SCSI scan, ``/dev/sda*``, ``/vendor``, init -- never
+happens.  It is a very good fit for "no output at all, forever", which is the
+complaint this board has produced since the first flash.
+
+So the fix is two lines, not a knob: ``compatible = "qcom,ufs-phy-qmp-v3"`` in
+``surya-sm6150.dts`` and ``CONFIG_PHY_QCOM_UFS_V3_SM4350=y`` in
+``arch/arm64/configs/vendor/surya.config``.  The node needed nothing else:
+``reg-names = "phy_mem"``, ``#phy-cells = <0>``, the three clock names its
+``.init`` looks up and ``resets = <&ufshc_mem 0>`` are already there, and
+``phy-qcom-ufs-qmp-v3.c`` asks for no supplies at all, which is why leaving
+``vdda-phy``/``vdda-pll`` out stays safe.
+
+Three gates replace the judgement call.  The PHY node's compatible is pinned to
+``qcom,ufs-phy-qmp-v3`` in both the board DTB and the DTB the zip packages;
+``CONFIG_PHY_QCOM_UFS_V3_SM4350`` must be ``y`` and ``CONFIG_PHY_QCOM_UFS_V3``
+must not be; and -- the general form, so a Kconfig label can never outvote a
+board again -- the workflow now takes every compatible on the PHY node, greps the
+of_match tables of the drivers under ``drivers/phy/qualcomm/`` for it, maps each
+hit to its Makefile symbol, requires that symbol to be ``y`` in the resolved
+config, and requires the calibration table of the header that driver includes to
+still hold the 88 entries stock holds.  A future switch to another v3/v4 file
+would have to come with a deliberate edit to this number, not with a config tweak.

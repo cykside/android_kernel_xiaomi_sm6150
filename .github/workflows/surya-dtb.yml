@@ -706,11 +706,17 @@ jobs:
           for config in SM_GCC_6150 QCOM_CLK_RPMH QCOM_GDSC_REGULATOR QCOM_PDC SPMI_MSM_PMIC_ARB INTERCONNECT_QCOM_SM6150 SCSI_UFS_QCOM; do
             grep -Fx "CONFIG_${config}=y" out/surya/.config
           done
-          # SM6150's UFS PHY is the QMP v4 block; PHY_QCOM_UFS_V3 builds the
-          # SDM660 driver, which cannot bind /soc/ufsphy_mem@1d87000.
-          grep -Fx CONFIG_PHY_QCOM_UFS_V4=y out/surya/.config
+          # The driver that binds /soc/ufsphy_mem@1d87000 is the one whose
+          # of_match_table carries the DT's compatible string.  Stock 4.14
+          # (sdmmagpie.dtsi) names "qcom,ufs-phy-qmp-v3", and in this tree that
+          # string belongs to phy-qcom-ufs-qmp-v3.c, behind
+          # CONFIG_PHY_QCOM_UFS_V3_SM4350 -- a symbol named after the chipset that
+          # shipped with the file, not after the PHY inside it.  It must be on:
+          # with it off the node has no driver, and binding V4 instead programs
+          # 2/3 of the calibration registers for another PHY revision.
+          grep -Fx CONFIG_PHY_QCOM_UFS_V3_SM4350=y out/surya/.config
           if grep -Fxq CONFIG_PHY_QCOM_UFS_V3=y out/surya/.config; then
-            echo '::error::Surya must not build the SDM660 UFS PHY driver in place of the QMP v4 one'
+            echo '::error::Surya must not build the SDM660 UFS PHY driver in place of the QMP v3 one'
             exit 1
           fi
           for config in PM_GENERIC_DOMAINS_OF ARM_PSCI_CPUIDLE_DOMAIN QCOM_RPMH INTERCONNECT_QCOM_BCM_VOTER; do
@@ -933,11 +939,11 @@ jobs:
           fdtoverlay -i "$bundle/surya-base.dtb" -o dtb "$bundle/surya-ufs.dtbo"
           test "$(fdtget -t s dtb /soc/ufshc@1d84000 status)" = okay
           test "$(fdtget -t s dtb /soc/ufsphy_mem@1d87000 status)" = okay
-          # The PHY node must name a driver that is actually built: an inherited
-          # "qcom,ufs-phy-qmp-v3" string matches nothing here (that string belongs
-          # to the SM4350 driver behind PHY_QCOM_UFS_V3_SM4350), which left the
-          # node "enabled; unbound / can_match: 0" and the host without a PHY.
-          test "$(fdtget -t s dtb /soc/ufsphy_mem@1d87000 compatible)" = 'qcom,ufs-phy-qmp-v4'
+          # Same assertion for the DTB the zip ships: the compatible must be the
+          # string stock gives this silicon, and the driver behind it must be the
+          # one the flashable image actually builds (the general check in the DTB
+          # job walks the of_match tables against out/surya/.config).
+          test "$(fdtget -t s dtb /soc/ufsphy_mem@1d87000 compatible)" = 'qcom,ufs-phy-qmp-v3'
           if ! grep -q 'if (err && err != -ENODATA)' "$GITHUB_WORKSPACE/drivers/phy/qualcomm/phy-qcom-ufs.c"; then
             echo '::error::phy-qcom-ufs must treat a missing *-supply property as "rail left as the bootloaders set it"'
             exit 1
@@ -1004,27 +1010,154 @@ jobs:
           test "$(fdtget -t s dtb /psci method)" = smc
           test "$(fdtget -t s dtb "$rsc/drv@2/clock-controller" compatible)" = qcom,sm6150-rpmh-clk
           test "$(fdtget -t s dtb "$host" compatible)" = qcom,ufshc
-          # This line demanded the string that left the PHY unbound, so it is now
-          # the guard for the fix: the node must name a driver this configuration
-          # actually builds (qcom,ufs-phy-qmp-v3 matched nothing -- see the note in
-          # surya-sm6150.dts and console-ramoops-13.txt).
-          test "$(fdtget -t s dtb "$phy" compatible)" = qcom,ufs-phy-qmp-v4
+          # The compatible must name the PHY revision the silicon has, which is a
+          # question the stock DT answers and a Kconfig prompt does not: stock 4.14
+          # (sdmmagpie.dtsi) binds "qcom,ufs-phy-qmp-v3", and this tree's
+          # phy-qcom-ufs-qmp-v3.h reproduces its calibration table entry for entry.
+          # See the note in surya-sm6150.dts before changing this.
+          test "$(fdtget -t s dtb "$phy" compatible)" = qcom,ufs-phy-qmp-v3
+          # A compatible string is only useful if some *built* driver lists it, and
+          # only useful to this board if that driver's tables are the board's.  The
+          # file that carries v3 sits behind CONFIG_PHY_QCOM_UFS_V3_SM4350 -- a
+          # symbol named after the chipset that shipped with it, not after the PHY
+          # -- so check the tables, never the label.
+          for c in $(fdtget -t s dtb "$phy" compatible); do
+            files=$(grep -l ""$c"" drivers/phy/qualcomm/*.c || true)
+            if [ -z "$files" ]; then
+              echo "::error::no driver under drivers/phy/qualcomm mentions $c"
+              exit 1
+            fi
+            built=0
+            for f in $files; do
+              sym=$(grep -F "$(basename "$f" .c).o" drivers/phy/qualcomm/Makefile |
+                    sed -n 's/^obj-\$(CONFIG_\([A-Z0-9_]*\)).*/\1/p' | head -1)
+              [ -n "$sym" ] || continue
+              if grep -Fxq "CONFIG_${sym}=y" out/surya/.config; then
+                built=1
+                echo "$c -> $(basename "$f") ($sym=y)"
+                hdr=$( { grep -o 'phy-qcom-ufs-qmp[a-z0-9.-]*\.h' "$f" || true; } | head -1 || true)
+                n=$(grep -c UFS_QCOM_PHY_CAL_ENTRY "drivers/phy/qualcomm/$hdr" || true)
+                if [ "$n" != 88 ]; then
+                  echo "::error::$f uses $hdr with $n calibration entries; stock's v3 table has 88, so this driver is not the PHY revision the board has (v4 has 177, v3-660 has 76)"
+                  exit 1
+                fi
+              fi
+            done
+            if [ "$built" != 1 ]; then
+              echo "::error::$c is only carried by a driver this configuration does not build; enable its CONFIG_ symbol in arch/arm64/configs/vendor/surya.config"
+              exit 1
+            fi
+          done
           test "$(fdtget -t x dtb "$host" phys)" = "$(fdtget -t x dtb "$phy" phandle)"
           # Preserve the contiguous FSociety splash, DFPS and pstore ranges.
           test "$(fdtget -t x dtb /reserved-memory/splash_region reg)" = '0 9c000000 0 1700000'
           test "$(fdtget -t x dtb /reserved-memory/dfps_data_region@9d700000 reg)" = '0 9d700000 0 100000'
-          test "$(fdtget -t x dtb /reserved-memory/ramoops@9d800000 reg)" = '0 9d800000 0 400000'
+          test "$(fdtget -t x dtb /reserved-memory/ramoops@9d800000 reg)" = '0 9d800000 0 240000'
           if fdtget -l dtb /reserved-memory | grep -Fxq disp_rdump_region@9c000000; then
             echo '::error::Inherited display ramdump overlaps the Surya splash reservation'
             exit 1
           fi
           ramoops_properties=$(fdtget -p dtb /reserved-memory/ramoops@9d800000)
           grep -qx no-map <<< "$ramoops_properties"
-          # The earlycon ECC layout must match the existing Surya recovery reader.
-          for spec in 'record-size 80000' 'console-size 100000' 'pmsg-size 200000' 'ecc-size 10'; do
-            read -r prop expected <<< "$spec"
-            test "$(fdtget -t x dtb /reserved-memory/ramoops@9d800000 "$prop")" = "$expected"
-          done
+          # The earlycon and the pstore console prz must land on one and the same
+          # ring, with the same capacity, and with no third writer.  Deriving the
+          # address from the DT is the only way to know: ramoops_probe() consumes
+          # the whole leftover for the dmesg przs (zone_sz = dump_mem_sz / cnt, not
+          # record-size), so the console prz moves whenever any size changes, and
+          # a console prz that does not fit inside reg fails the whole probe.
+          # See Documentation/arm64/surya-bringup.rst: the 2026-11-27 20:16 report
+          # read "found existing invalid buffer, size 57821, start 192977" because
+          # the pmsg prz shared the earlycon's header at 0x9da00000.
+          python3 - <<'PYEOF'
+          import os, re, subprocess, sys
+
+          NODE = "/reserved-memory/ramoops@9d800000"
+
+          def prop(name, default=None):
+              out = subprocess.run(["fdtget", "-t", "x", "dtb", NODE, name],
+                                   capture_output=True, text=True)
+              if out.returncode:
+                  if default is None:
+                      sys.exit("%s has no %s: %s" % (NODE, name, out.stderr.strip()))
+                  return default
+              return int(out.stdout.split()[0], 0)
+
+          region = subprocess.run(["fdtget", "-t", "x", "dtb", NODE, "reg"],
+                                  capture_output=True, text=True).stdout.split()
+          # #address-cells/#size-cells are 2 here: "0 9d800000 0 240000",
+          # so the low halves are the third and the last token.
+          if len(region) >= 4:
+              base, size = int(region[-3], 0), int(region[-1], 0)
+          else:
+              base, size = int(region[-2], 0), int(region[-1], 0)
+
+          root = os.environ.get("GITHUB_WORKSPACE", ".")
+          installer = open(root + "/tools/surya-anykernel/boot-test.sh").read()
+          m = re.search(r"earlycon=ramoops,(0x[0-9a-f]+),(0x[0-9a-f]+)", installer)
+          if not m:
+              sys.exit("boot-test.sh must name the ramoops earlycon zone")
+          ec_addr, ec_size = int(m.group(1), 0), int(m.group(2), 0)
+
+          console = prop("console-size")
+          ftrace = prop("ftrace-size", 0)
+          pmsg = prop("pmsg-size")
+          record = prop("record-size")
+          ecc = prop("ecc-size")
+
+          # ramoops_probe(): the dmesg przs take everything that is not console/ftrace/pmsg,
+          # and split that leftover evenly, so zone_sz is dump / cnt -- not record-size.
+          dump = size - console - ftrace - pmsg
+          cnt = dump // record if record else 0
+          zone = (dump // cnt) & ~1 if cnt else 0
+          caddr = base + cnt * zone
+
+          fail = []
+          if not cnt:
+              fail.append("no dmesg prz fits (dump 0x%x / record 0x%x)" % (dump, record))
+          if cnt * zone + console + ftrace + pmsg > size:
+              fail.append("przs run past reg; ramoops_init_prz() would fail the probe")
+          if caddr != ec_addr:
+              fail.append("console prz lands at 0x%x but the earlycon writes 0x%x" % (caddr, ec_addr))
+          if ecc:
+              fail.append("ecc-size %d: prz capacity stops matching the earlycon ring, "
+                          "and the recovery reader parses ecc 0/0" % ecc)
+          if pmsg:
+              fail.append("pmsg-size 0x%x: a second writer on a prz header is what makes "
+                          "start > size, and 4.14 erases a zone it calls invalid" % pmsg)
+          # prz->buffer_size = zone - 12 (ram_core.c) and earlycon-ramoops uses zone - 12.
+          if console != ec_size:
+              fail.append("console prz 0x%x != earlycon zone 0x%x: two capacities on one "
+                          "header" % (console, ec_size))
+          if ec_size > 0x40000:
+              fail.append("earlycon zone 0x%x exceeds one early_ioremap (256K)" % ec_size)
+          # Cross-check against the reader: the recovery inherits the stock 4.14
+          # map (sdmmagpie.dtsi: reg 0x400000, record 0x80000, pmsg 0x200000,
+          # console 0x100000), so its pmsg prz starts where ours must write, and
+          # its dmesg przs are 0x80000 each.  Any zone the recovery considers
+          # oversized or torn gets zap()ped, not exported.
+          STOCK = dict(size=0x400000, record=0x80000, console=0x100000,
+                       pmsg=0x200000)
+          s_dump = STOCK["size"] - STOCK["console"] - STOCK["pmsg"]
+          s_cnt = s_dump // STOCK["record"]
+          s_zone = (s_dump // s_cnt) & ~1
+          st_console = base + s_cnt * s_zone
+          st_pmsg = st_console + STOCK["console"]
+          if ec_addr != st_pmsg:
+              fail.append("earlycon at 0x%x but the recovery's pmsg prz (its only "
+                          "unconditional reader) is at 0x%x" % (ec_addr, st_pmsg))
+          if record != STOCK["record"]:
+              fail.append("record-size 0x%x differs from the recovery's 0x%x dmesg "
+                          "przs, whose reader rejects a larger cursor"
+                          % (record, STOCK["record"]))
+          if size > STOCK["size"]:
+              fail.append("reg 0x%x is larger than the stock 0x%x reservation"
+                          % (size, STOCK["size"]))
+          if fail:
+              sys.exit("ramoops geometry: " + "; ".join(fail))
+          print("ramoops: dmesg prz 0x%x+0x%x, console prz 0x%x+0x%x, ring 0x%x -- matches "
+                "earlycon=ramoops,0x%x,0x%x"
+                % (base, cnt * zone, caddr, console, console - 12, ec_addr, ec_size))
+          PYEOF
           gdsc=/soc/qcom,gdsc@177004
           # The vendor gdsc-regulator must not probe raw-offset windows
           # (asynchronous SError, see Documentation/arm64/surya-bringup.rst).
@@ -1222,8 +1355,28 @@ jobs:
           # boot partition with no way to settle it, and the install log is already
           # part of what comes back (/cache/recovery/log), so identity now costs
           # nobody an extra step.
+          # The ramoops earlycon is the capture path this board can rely on, and
+          # it exists precisely because the boot dies mid-printk: the header must
+          # therefore be committed *before* the payload, or every crash costs the
+          # whole buffer instead of one record (the 2026-11-27 20:16 report:
+          # "found existing invalid buffer, size 57821, start 192977").
+          wr=$(awk '/^static void earlycon_ramoops_write/,/^}/' "$GITHUB_WORKSPACE/drivers/tty/serial/earlycon-ramoops.c")
+          line_size=$(grep -n -m1 'writel_relaxed(size, &rbuf->size)' <<< "$wr" | cut -d: -f1)
+          line_start=$(grep -n -m1 'writel_relaxed(end, &rbuf->start)' <<< "$wr" | cut -d: -f1)
+          line_pay=$(grep -n -m1 'writeb_relaxed(\*s++' <<< "$wr" | cut -d: -f1)
+          if [ -z "$line_size" ] || [ -z "$line_start" ] || [ -z "$line_pay" ] ||
+             [ "$line_size" -gt "$line_start" ] || [ "$line_start" -gt "$line_pay" ]; then
+            echo '::error::earlycon_ramoops_write() must write size, then start, then the payload -- any other order leaves start > size across a reset, and the 4.14 recovery reader zaps a buffer it calls invalid'
+            exit 1
+          fi
           kernel_id=$(gzip -cd Image.gz 2>/dev/null | strings -a | grep -m1 -o 'Linux version 6\.1\.177-surya-g[0-9a-f]*' || true)
+          # A pull_request run builds refs/pull/N/merge, so the -g<sha> the kernel
+          # prints is that merge commit, not the branch head.  Print both: the
+          # 2026-11-27 report's "ga5684c8d8572" is merge commit a5684c8d85722e6e
+          # (head b2529a124 + base 4ae872acf) and looked, for a minute, like a
+          # wrong zip.  The head sha below is what a report has to be matched to.
           printf '%s\n' "${kernel_id:-Linux version unknown}" > SURYA-VERSION
+          printf 'head=%s\n' "${{ github.event.pull_request.head.sha || github.sha }}" >> SURYA-VERSION
           sha256sum Image.gz dtb dtbo.img > SURYA-SHA256SUMS
           sh -n anykernel.sh
           if ! grep -q 'SURYA-VERSION' anykernel.sh; then

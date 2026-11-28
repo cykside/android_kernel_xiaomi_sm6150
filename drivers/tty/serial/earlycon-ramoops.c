@@ -10,7 +10,14 @@
  *   earlycon=ramoops,<phys addr of the zone>[,<zone size>]
  *
  * The zone size defaults to 256K, the most a single early_ioremap() can
- * map. Use a zone that nothing else writes to early, e.g. the pmsg zone.
+ * map.  Give it the pstore *console* prz, at the same address and the same
+ * size, with ecc-size 0: prz->buffer_size is then zone - 12 exactly like this
+ * driver's ring, so the two writers of one header cannot disagree about
+ * capacity, and the recovery's reader -- which parses the plain header with no
+ * ECC -- finds a buffer it will export instead of one it calls invalid and
+ * erases.  Sharing the header with a *different* prz (a pmsg zone of another
+ * size is the classic case) is what loses the whole capture: see the note in
+ * Documentation/arm64/surya-bringup.rst.
  */
 
 #include <linux/console.h>
@@ -39,23 +46,54 @@ static u32 rbuf_size;
 static void earlycon_ramoops_write(struct console *con, const char *s,
 				   unsigned int n)
 {
-	u32 start, size;
+	unsigned int i;
+	u32 end, start, size;
 
-	if (!rbuf)
+	if (!rbuf || !n)
 		return;
 
 	start = readl_relaxed(&rbuf->start);
 	size = readl_relaxed(&rbuf->size);
-	while (n--) {
-		writeb_relaxed(*s++, &rbuf->data[start]);
-		if (++start == rbuf_size)
-			start = 0;
+	if (n > rbuf_size)
+		n = rbuf_size;
+
+	/*
+	 * Publish the header for this record *before* writing its payload, and
+	 * write the two header words in the order readers validate against.
+	 *
+	 * A persistent_ram zone is only exported when start <= size <= capacity.
+	 * This console exists for a board that dies inside a printk, on the CPU
+	 * that holds the log lock, so a reset cuts the payload and the header
+	 * apart, and the old order (payload, then start, then size) left the
+	 * window where start had moved ahead of a size that never caught up --
+	 * which is exactly what the recovery kept reporting while our text sat
+	 * right there: 2026-11-27 20:16 "persistent_ram: found existing invalid
+	 * buffer, size 57821, start 192977", and 23:56 "size 52101, start
+	 * 52133", a 32-byte gap, one printk record.  Worse than losing a
+	 * capture: 4.14's reader *zaps* a buffer it calls invalid, so the tear
+	 * also destroyed the previous record.
+	 *
+	 * size first (it only ever grows, so start <= size holds at every
+	 * instant), then start, then the bytes.  A crash now costs at most the
+	 * tail of the last record; the zone stays exported.
+	 */
+	end = start;
+	for (i = 0; i < n; i++) {
+		if (++end == rbuf_size)
+			end = 0;
 		if (size < rbuf_size)
 			size++;
 	}
-	writel_relaxed(start, &rbuf->start);
 	writel_relaxed(size, &rbuf->size);
-	/* make sure it reached DDR before a reset can hit */
+	writel_relaxed(end, &rbuf->start);
+	/* order the header words ahead of the payload */
+	mb();
+
+	for (i = 0; i < n; i++) {
+		writeb_relaxed(*s++, &rbuf->data[start]);
+		if (++start == rbuf_size)
+			start = 0;
+	}
 	mb();
 }
 
@@ -78,8 +116,8 @@ static int __init earlycon_ramoops_setup(struct earlycon_device *dev,
 		return -ENOMEM;
 	rbuf_size = size - sizeof(*rbuf);
 
-	writel_relaxed(0, &rbuf->start);
 	writel_relaxed(0, &rbuf->size);
+	writel_relaxed(0, &rbuf->start);
 	writel_relaxed(PERSISTENT_RAM_SIG, &rbuf->sig);
 	mb();
 
