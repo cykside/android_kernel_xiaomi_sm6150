@@ -696,9 +696,28 @@ static void surya_wedge_watchdog(struct work_struct *work)
 		pr_notice("Surya bringup: provider chain settled at %s\n",
 			  surya_chain_at);
 	}
-	if (++rounds < 6)
+	if (++rounds < 6) {
 		queue_delayed_work_on(1, system_long_wq, &surya_wedge_work,
 				      20 * HZ);
+		return;
+	}
+
+	/*
+	 * Final round and this board still has no storage provider.  Stop here
+	 * with a panic instead of letting the boot hang or let init reboot on its
+	 * own, for one reason: this is the only way a *capture* is guaranteed.
+	 * A hang produces no warm reboot, and the recovery that follows a held
+	 * power key is a hard reset, which drops DDR -- on 2026-11-28 23:5x that
+	 * cost a whole round with an empty /sys/fs/pstore and nothing to read.
+	 * A panic reboots through panic=5 (warm), the console content is already
+	 * in the prz, and "Surya bringup: ... -- see the rounds above" is the
+	 * last thing a reader sees.  It only fires while the chain never settled,
+	 * so a board that reaches /dev/disk/by-name never takes this path.
+	 */
+	if (!READ_ONCE(surya_chain_settled) || atomic_read(&surya_attempt_busy))
+		panic("Surya bringup: UFS provider chain never settled -- see the rounds above\n");
+
+	pr_notice("Surya bringup: watchdog finished with the chain settled; not panicking\n");
 }
 
 /*

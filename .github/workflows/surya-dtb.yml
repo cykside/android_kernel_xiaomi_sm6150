@@ -696,7 +696,7 @@ jobs:
           grep -Fx CONFIG_REGULATOR_RPMH=y out/surya/.config
           grep -Fx CONFIG_REGULATOR_PROXY_CONSUMER=y out/surya/.config
           grep -Fx CONFIG_NVMEM_QCOM_QFPROM=y out/surya/.config
-          for config in PSTORE PSTORE_RAM PSTORE_CONSOLE PSTORE_PMSG SERIAL_CORE SERIAL_EARLYCON SERIAL_EARLYCON_RAMOOPS; do
+          for config in PSTORE PSTORE_RAM PSTORE_CONSOLE PSTORE_PMSG SERIAL_CORE SERIAL_EARLYCON SERIAL_EARLYCON_RAMOOPS SOFTLOCKUP_DETECTOR; do
             grep -Fx "CONFIG_${config}=y" out/surya/.config
           done
           if grep -Eq '^CONFIG_(POWER_RESET_QCOM_DOWNLOAD_MODE|QCOM_FORCE_WDOG_BITE_ON_PANIC)=[ym]$' out/surya/.config; then
@@ -1031,7 +1031,7 @@ jobs:
             echo '::error::Surya chosen bootargs still enforce strict supplier ordering'
             exit 1
           fi
-          for knob in 'cpuidle.off=1' 'loglevel=8' 'clk_ignore_unused'; do
+          for knob in 'cpuidle.off=1' 'loglevel=8' 'clk_ignore_unused' 'softlockup_panic=1'; do
             if ! grep -q "$knob" <<< "$bootargs"; then
               echo "::error::Surya chosen bootargs lost $knob"
               exit 1
@@ -1068,6 +1068,17 @@ jobs:
           # alive through its critical-clk list.
           if ! grep -q "patch_cmdline 'clk_ignore_unused'" "$GITHUB_WORKSPACE/tools/surya-anykernel/anykernel.sh"; then
             echo '::error::the installer must put clk_ignore_unused on the stock cmdline'
+            exit 1
+          fi
+          # A soft lockup report that does not reboot is a report that lands in
+          # the wrapped tail of the prz, or in no capture at all when the user has
+          # to force a hard reset (empty /sys/fs/pstore).
+          if ! grep -q "patch_cmdline 'softlockup_panic='" "$GITHUB_WORKSPACE/tools/surya-anykernel/anykernel.sh"; then
+            echo '::error::the installer must panic on soft lockups so every boot leaves a capture'
+            exit 1
+          fi
+          if ! grep -q 'panic("Surya bringup:' "$GITHUB_WORKSPACE/drivers/base/dd.c"; then
+            echo '::error::the Surya bring-up watchdog must panic on its final round while the chain is unsettled'
             exit 1
           fi
           if ! grep -qE 'regmap_update_bits\(regmap, GCC_(CAMERA|VIDEO)_MISC' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c"; then

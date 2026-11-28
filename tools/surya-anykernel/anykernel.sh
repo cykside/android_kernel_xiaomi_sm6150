@@ -109,6 +109,9 @@ patch_cmdline 'cpuidle.off=' 'cpuidle.off=1';
 # read on this board wedges the CPU once its AHB path is gone
 # (console-ramoops-13.txt).  Keep the bootloaders' clock state.
 patch_cmdline 'clk_ignore_unused' 'clk_ignore_unused';
+# Panic on a soft lockup so the wedged CPU's backtrace is the last
+# thing in pstore and the reboot is warm (see the note in surya-sm6150.dts).
+patch_cmdline 'softlockup_panic=' 'softlockup_panic=1';
 # initcall_debug is not patched on any more: one line per probe and per initcall
 # wraps the 2 MiB console ramoops prz mid-boot (capture 11 came back interleaved
 # with the next boot).  gcc_sm6150_probe() prints its own stage markers instead.

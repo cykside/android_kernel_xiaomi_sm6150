@@ -1851,3 +1851,43 @@ real ``core_clk`` -> ``scsi 0:0:0:0: Attached scsi generic sg0`` ->
 ``init: Mounted /vendor``.  If the PHY line in the snapshot changes to
 ``enabled; driver assigned`` but the host still reports ``-517``, the provider
 ordering -- not the PHY -- is what is left.
+
+Why a boot can leave no capture, and what now guarantees one
+----------------------------------------------------
+
+The round after ``fb3fd29ca`` came back with an empty ``/sys/fs/pstore``.  That
+is not a collector bug and it is not bad luck; it is a property of how this
+kernel gets rebooted.  A console prz lives in DRAM, so it survives only a
+*warm* reset.  Every capture from 8 to 13 survived because the boot ended in a
+reboot the kernel asked for -- ``init`` gives up on ``metadata, super,
+vbmeta_system`` after 10 s, prints "Rebooting in 5 seconds", and ``panic=5``
+takes the SoC down through the warm path.  A boot that instead *hangs* never
+reaches that reboot; the only way out is holding the power key, which is a hard
+PON reset, and DDR is gone.  Nothing to read, no matter how much of the buffer
+was written.
+
+Two changes make a capture unconditional while the board is in bring-up, and
+neither is a boot fix -- they exist so the next round cannot be lost:
+
+* ``softlockup_panic=1``, in ``/chosen`` and in the installer.  The soft lockup
+  detector is already built into this kernel (``CONFIG_SOFTLOCKUP_DETECTOR=y``
+  arrives via ``gki_defconfig``; the workflow now asserts it, because without
+  the symbol the knob is inert), so for the last four builds a CPU wedged inside
+  a device access *was* detected -- "BUG: soft lockup - CPU#N stuck for 22s!"
+  plus that CPU's backtrace.  The report alone does not stop anything, and at
+  22 s it lands a breath before init's own reboot, which is exactly where the
+  prz tail was least reliable.  Panicking makes that trace the last thing in the
+  buffer and makes the reboot the warm one.
+* the bring-up watchdog in ``drivers/base/dd.c`` panics on its final round
+  (sixth, so ~2 minutes in) if the provider chain never settled or a probe is
+  still in flight.  This is the backstop for the case the lockup detector cannot
+  see: nothing wedged, everything merely deferred forever -- no stuck CPU, hence
+  no report, and a boot that ends in a reboot only as long as init gets that far.
+
+``pr_notice("Surya bringup: watchdog finished with the chain settled; not
+panicking")`` is the line that says the board is healthy enough that the
+backstop stood down, which is also the marker to look for if the phone ever
+boots into recovery on its own.  Both knobs come off the moment the storage path
+is real: the panic is guarded by the same ``surya_chain_settled`` flag the
+watchdog uses, and the two command-line changes are one line each in
+``surya-sm6150.dts`` and ``tools/surya-anykernel/anykernel.sh``.

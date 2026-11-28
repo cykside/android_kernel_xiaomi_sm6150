@@ -129,9 +129,21 @@
  * returned.  Ignoring the unused-clock pass reproduces the 4.14 state for every
  * clock the bootloaders left on, which is the whole point of bring-up here; it
  * also covers the display, camera and GPU register spaces for the same price.
+ *
+ * softlockup_panic=1 is what makes a capture exist at all.  The detector is
+ * already built (CONFIG_SOFTLOCKUP_DETECTOR=y from gki_defconfig) but a report
+ * it prints does not stop the boot, so on the boards where a CPU is wedged in a
+ * device access init's own 10 s block-device timeout rebooted the phone a few
+ * seconds later and the trace either landed in the wrapped tail of the prz or
+ * not at all.  With panic the reboot is the *panic* reboot -- warm, so DDR
+ * survives -- the buffer ends with "BUG: soft lockup - CPU#N stuck for 22s!"
+ * plus that CPU's backtrace, and the collector reads it after.  It also fixes
+ * the failure mode seen on 2026-11-28 23:5x, where the boot hung somewhere
+ * with no panic and no reboot at all, the user held the power key, and a hard
+ * reset drops DDR: /sys/fs/pstore came back empty and the round was lost.
  */
 &chosen {
-	bootargs = "kpti=0 ssbd=force-off qcom_dma_heaps.enable_bitstream_contig_heap=y rcupdate.rcu_expedited=0 cpufreq.default_governor=performance fw_devlink=permissive cpuidle.off=1 loglevel=8 clk_ignore_unused";
+	bootargs = "kpti=0 ssbd=force-off qcom_dma_heaps.enable_bitstream_contig_heap=y rcupdate.rcu_expedited=0 cpufreq.default_governor=performance fw_devlink=permissive cpuidle.off=1 loglevel=8 clk_ignore_unused softlockup_panic=1";
 };
 
 /*
