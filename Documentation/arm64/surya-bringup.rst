@@ -1213,12 +1213,14 @@ destinations and traces recovery logs for ramoops mentions.
 dprz smuggling (capture v3)
 ---------------------------
 
-TWRP's own boot still zaps or consumes whatever lives in the console
-and pmsg prz before the collector can mount pstore (proven by the
-empty mount with no "invalid buffer" report, and by ``last_log.gz``
-containing only recovery chatter).  The one prz family the 4.14
-recovery kernel reads without a probe-time zap is the dump zone set:
-``ramoops_init_przs()`` passes no ZAP flag there.  The earlycon
+TWRP's own boot moves or consumes the records before the collector can
+mount pstore (``last_log.gz`` holding only recovery chatter is the
+proof of the move, not of a zap).  The zapping claim here was wrong and
+is corrected in the capture-12 section at the end of this file: the
+recovery's 4.14 ``ram_core.c`` has no ``PRZ_FLAG_ZAP_OLD`` at all, so a
+valid header it reads is snapshotted by ``persistent_ram_save_old()``
+and left intact; the only tree that zaps is ours, at its own probe, and
+only for przs it owns.  The earlycon
 therefore targets the first legacy dump prz (``0x9d800000``, 256 KiB
 window inside a 512 KiB dprz) and seeds its ring with the exact
 ``====<sec>.<nsec>-P`` kmsg header that ``ramoops_read_kmsg_hdr()``
@@ -2452,10 +2454,13 @@ one line at the start of every boot::
 
   ==== surya earlycon, new boot: Linux version 6.1.177-surya-g<sha> (...)
 
-Both exist because this device has no separate recovery kernel -- the TWRP
-environment that copies the log out runs the same Image with the same cmdline, so a
-per-boot reset destroyed the log of the boot under test 0.2 s before it could be
-read, and every capture in this bring-up has been the *reader's* log.  Appending
+Both exist because the environment that copies the log out is a *different*
+kernel -- the stock 4.14 recovery -- whose console prz ends exactly where this ring
+starts and whose reader never resets a valid header (see the capture-12 section at
+the end of this file).  A per-boot reset here would therefore destroy the log of the
+boot under test 0.2 s before a reader could get to it, which is what happened in the
+round that gave our kernel a prz on this zone; and while the header stays intact,
+every ``console-ramoops-*`` capture has been the *reader's* own log.  Appending
 costs a ring shared by a few boots (the banner splits them again, and names the
 build, which is also the check against flashing a stale tree); it buys a view of a
 boot that dies before the reboot, which is the boot that matters here.  A header
@@ -2464,8 +2469,10 @@ still reset, because that is the pair a pstore reader calls invalid and erases.
 
 The mechanism that makes the preserved header enough is in ``fs/pstore/ram_core.c``:
 ``persistent_ram_post_init()`` of the *reading* boot finds our signature with a
-consistent cursor, calls ``persistent_ram_save_old()`` (which copies the ring into
-``prz->old_log``) and only then lets ``PRZ_FLAG_ZAP_OLD`` reset the live cursor.
+consistent cursor and calls ``persistent_ram_save_old()`` (which copies the ring
+into ``prz->old_log``).  A 6.1 reader then lets ``PRZ_FLAG_ZAP_OLD`` reset the live
+cursor; the 4.14 recovery reader has no such flag and leaves the header alone,
+which is why a ring in the recovery's window can be read more than once.
 ``ramoops_get_next_prz()`` exports a prz exactly when ``persistent_ram_old_size()``
 is non-zero, and ``ramoops_pstore_read()`` walks dmesg, console, pmsg, ftrace in
 that order without filtering on the requested type, so the file name follows the
@@ -2477,3 +2484,127 @@ survived.
 
 What capture 14 does *not* say is how far the kernel got.  It constrains nothing
 about UFS, GCC or the PHY, and it must not be read as "the kernel printed nothing".
+
+Capture 12: an empty pstore because our own probe erased the ring
+----------------------------------------------------------------
+
+The round that moved the log zone onto a pmsg prz came back with
+``/sys/fs/pstore`` mounted and ``total 0``, and with *no* complaint from the ramoops
+driver at all (pstore-mount-6.txt).  That combination has one explanation, and it is
+in this tree: ``ramoops_init_prz()`` passes ``PRZ_FLAG_ZAP_OLD`` for every prz it
+creates (``fs/pstore/ram.c:589``), and ``persistent_ram_post_init()`` takes the
+"header looks valid" branch, snapshots it with ``persistent_ram_save_old()`` and
+then falls through to ``persistent_ram_zap()`` (``fs/pstore/ram_core.c:532,556,567``),
+which writes ``start = size = 0``.  A prz of ours on the log zone is therefore
+erased 0.2 s into the very boot whose log the zone holds; by the time the boot dies
+the header says empty, and an empty header makes the reader return *before* the
+snapshot, so nothing is exported.  The fix is not a geometry change: the log zone
+must be a zone that this kernel does not own at all.
+
+So ``surya-sm6150.dts`` reserves it as a sibling of the ramoops node with no
+``compatible``::
+
+  surya_log: ramoops-log@9da00000 {
+      no-map;
+      reg = <0 0x9da00000 0 0x40000>;
+  };
+
+The node name keeps the ``ramoops-`` prefix only to be findable; ``ramoops_of_data``
+is matched by *compatible*, so a bare ``reserved_mem`` child is handed to
+``memblock``/``nomap`` and no driver attaches to it.  What ``no-map`` buys is
+specific: without it the region stays in the linear map while ``memblock`` marks it
+``NOMAP`` -- the kernel would use it as normal RAM and the earlycon's writes would
+race the page allocator.
+
+What the reader does with the ring
+---------------------------------
+
+The kernel that reads these records back is the stock 4.14 recovery kernel, and the
+captures prove it themselves (twrp-pstore-facts-10.txt::
+
+  [    0.224860] pstore: using zlib compression
+  [    0.225452] ramoops: attached 0x400000@0x9d800000, ecc: 0/0
+
+Neither line exists in this tree -- 6.1 prints ``Using crash dump compression: %s``
+(``fs/pstore/platform.c:331``) and has no ``attached`` line -- so any sentence about
+"the same Image boots into recovery" is false, including the one this file carried
+until now.  Two consequences follow, both load-bearing:
+
+* Capacity.  ``prz->buffer_size`` is ``zone - 12 - ecc`` and this earlycon's ring is
+  ``zone - 12``, so the two owners of one header agree only with ``ecc-size = <0>``;
+  a header whose cursor exceeds the reader's capacity is the "found existing invalid
+  buffer" case, which the reader erases (capture 11, 2026-11-27 20:16: size 57821,
+  start 192977).
+* Signature.  Both generations expect ``buffer->sig == PERSISTENT_RAM_SIG ^ type``
+  with type 0 for dmesg, console *and* pmsg -- only ftrace passes
+  ``LINUX_VERSION_CODE`` (4.14 ``ram.c:800-821``, 6.1 ``ram.c:783-805``).  The plain
+  ``PERSISTENT_RAM_SIG`` written here is therefore valid as a dmesg *or* a pmsg
+  header, and capture 11 is device proof that the sig matched: that message is
+  reached only inside the signature-match branch.
+
+Against the stock map the two reservations line up exactly.  The reader's
+``sdmmagpie.dtsi:669`` region is ``0x400000`` at ``0x9d800000`` with
+``record 0x80000``, ``console 0x100000``, ``pmsg 0x200000``, so its dump zones end
+and its pmsg prz begins at ``0x9da00000`` -- where our ring starts, and where its
+console prz ends.  Our dmesg przs (4 x ``0x80000``) cover ``0x9d800000..0x9da00000``,
+which is the reader's dmesg window.  A boot that panics should therefore surface
+twice, ``dmesg-ramoops-*`` from the dmesg przs and the earlycon text from
+``pmsg-ramoops-0``; a boot that only spins prints to neither, and the earlycon text
+alone is the record.
+
+The collector cannot assume the mount still holds any of it: TWRP relocates pstore
+records into ``/cache/recovery/last_log`` and ``log`` (rotated ``.gz``) at its own
+boot and erases the mount, which is what ``moved-stat-10.txt`` shows (26823 B and
+34265 B, both stamped inside the recovery boot).  An empty mount is evidence of the
+move, not of an empty ring, so ``collect-logs.sh`` now copies those destinations,
+decompresses them, and prints a printable-ratio line per file with an explicit
+verdict -- ``empty prz`` for 0 B, ``overwritten by the reader's own compressed
+records`` near 38 % printable (the ratio capture 14 measured), ``readable``
+otherwise.
+
+Naming which build produced a capture
+-------------------------------------
+
+A ``pull_request`` job checks out ``refs/pull/N/merge``, so both the kernel's own
+``Linux version 6.1.177-surya-g<sha>`` and the ``head=`` line of ``SURYA-VERSION``
+carry the *merge* sha, not the branch sha printed on the run page.  Rounds were lost
+to that gap.  ``SURYA-VERSION`` therefore carries three lines -- the ``Linux version``
+string cut out of the compressed Image, ``head=<branch sha>`` resolved by the
+packaging step from the merge commit's second parent, and ``# stamp=<kind>`` saying
+which of the two cases it was -- and ``boot-test.sh`` ui_prints them one per call
+(passing the multi-line file in a single ``ui_print`` made recovery echo
+``E:unknown command [head=6e6ae27fdc3b...]`` into the one log that shows a flash
+succeeded) and copies the file to ``/sdcard/Surya-boot/last-flashed.txt``; and ``collect-logs.sh`` gathers that
+file as ``flashed-stamp.txt``.  Reading the stamp out of recovery's own log is what
+finally identified the capture-12 round: ``moved-cache_recovery_log-7.txt:2224``
+prints ``Linux version 6.1.177-surya-g6e6ae27fdc3b``, the merge commit of run
+46137886035, whose head is ``a9b76bd5d`` -- the build that put a prz on the log zone.
+
+Gate
+---
+
+Step 12 of ``.github/workflows/surya-dtb.yml`` no longer only lints this geometry, it
+computes it: it derives ``dump / cnt / zone`` from the DTB's ``reg``, rejects a
+non-zero ``console-size``, ``pmsg-size`` or ``ecc-size`` naming the failure mode each
+would cause, requires the log sibling to be ``compatible``-less, ``no-map``, exactly
+``log_size == earlycon zone == 0x40000``, adjacent to the end of the dmesg przs, and
+equal to the reader's pmsg base.  A verified run against the rebuilt DTB prints::
+
+  ramoops: dmesg prz 0x9d800000+0x200000 (4 x 0x80000), log zone 0x9da00000+0x40000
+  reserved but unowned, ring 0x3fff4 -- matches earlycon=ramoops,0x9da00000,0x40000
+
+and mutant DTBs ``pmsg40``, ``con40``, ``slack``, ``compat``, ``nomap``, ``smalllog``
+are each rejected with a named reason.  Building those mutants found two holes in the
+gate itself -- it checked neither ``no-map`` nor the log node's size -- which is why
+both assertions exist now; the first run also taught the obvious lesson that a
+fixture builder that silently fails produces a rejection that means nothing, so the
+rig asserts every mutant exists before trusting it.
+
+Still open
+----------
+
+None of this moves the wall.  Capture 13 ends at ``Surya gcc: mapped`` with the UFS
+host asking for ``core_clk`` and getting ``-517``, and whether the next boot reaches
+``misc-skipped`` / ``dfs`` / ``register`` / ``pm-ops`` is exactly what a readable ring
+would answer.  "Does it boot?" remains unproven; what is now proven is that the
+capture path no longer destroys its own evidence.

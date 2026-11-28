@@ -1082,7 +1082,15 @@ jobs:
           # Preserve the contiguous FSociety splash, DFPS and pstore ranges.
           test "$(fdtget -t x dtb /reserved-memory/splash_region reg)" = '0 9c000000 0 1700000'
           test "$(fdtget -t x dtb /reserved-memory/dfps_data_region@9d700000 reg)" = '0 9d700000 0 100000'
-          test "$(fdtget -t x dtb /reserved-memory/ramoops@9d800000 reg)" = '0 9d800000 0 240000'
+          test "$(fdtget -t x dtb /reserved-memory/ramoops@9d800000 reg)" = '0 9d800000 0 200000'
+          test "$(fdtget -t x dtb /reserved-memory/ramoops-log@9da00000 reg)" = '0 9da00000 0 40000'
+          # The log zone must stay driver-free: a compatible there binds ramoops,
+          # and ramoops zaps the header it takes over.
+          fdtget dtb /reserved-memory/ramoops-log@9da00000 no-map >/dev/null
+          if fdtget -t s dtb /reserved-memory/ramoops-log@9da00000 compatible >/dev/null 2>&1; then
+            echo '::error::/reserved-memory/ramoops-log@9da00000 must have no compatible: any prz of ours there gets zap()ped at our own probe'
+            exit 1
+          fi
           if fdtget -l dtb /reserved-memory | grep -Fxq disp_rdump_region@9c000000; then
             echo '::error::Inherited display ramdump overlaps the Surya splash reservation'
             exit 1
@@ -1134,7 +1142,7 @@ jobs:
               sys.exit("%s: fdtget found no usable reg property (%r) -- the node or the "
                        "dtb is missing, so every derived address below would be a guess"
                        % (NODE, region))
-          # #address-cells/#size-cells are 2 here: "0 9d800000 0 240000",
+          # #address-cells/#size-cells are 2 here: "0 9d800000 0 200000",
           # so the low halves are the third and the last token.
           if len(region) >= 4:
               base, size = num(region[-3]), num(region[-1])
@@ -1154,45 +1162,78 @@ jobs:
           record = prop("record-size")
           ecc = prop("ecc-size")
 
-          # ramoops_probe(): the dmesg przs take everything that is not console/ftrace/pmsg,
-          # and split that leftover evenly, so zone_sz is dump / cnt -- not record-size.
+          # The log zone is a separate reservation, so a second fdtget is needed.
+          LOGNODE = "/reserved-memory/ramoops-log@9da00000"
+
+          def log_prop(name, node=LOGNODE):
+              out = subprocess.run(["fdtget", "-t", "x", "dtb", node, name],
+                                   capture_output=True, text=True)
+              if out.returncode or not out.stdout.split():
+                  sys.exit("%s has no usable %s: %s" % (node, name,
+                                                         out.stderr.strip() or "empty"))
+              return out.stdout.split()
+
+          log_region = log_prop("reg")
+          if len(log_region) >= 4:
+              log_addr, log_size = num(log_region[-3]), num(log_region[-1])
+          else:
+              log_addr, log_size = num(log_region[-2]), num(log_region[-1])
+          # A compatible here would bind a driver, and a driver means a prz, which
+          # means PRZ_FLAG_ZAP_OLD: post_init() would snapshot the ring and then
+          # zero start/size in the header -- at 0.2 s of the boot whose log it is.
+          log_compatible = subprocess.run(["fdtget", "-t", "s", "dtb", LOGNODE,
+                                          "compatible"], capture_output=True, text=True)
+          fail = [ "%s carries compatible %r: any driver there makes the log a prz, "
+                   "and ramoops_init_prz() passes PRZ_FLAG_ZAP_OLD, so "
+                   "persistent_ram_post_init() zeroes the ring header at probe time"
+                   % (LOGNODE, log_compatible.stdout.strip())
+                 ] if (log_compatible.returncode == 0 and
+                       log_compatible.stdout.strip()) else []
+
+          # ramoops_probe(): the dmesg przs take everything that is not
+          # console/ftrace/pmsg and split that leftover evenly, so zone_sz is
+          # dump / cnt -- not record-size.
           dump = size - console - ftrace - pmsg
           cnt = dump // record if record else 0
           zone = (dump // cnt) & ~1 if cnt else 0
 
-          fail = []
           if not cnt:
               fail.append("no dmesg prz fits (dump 0x%x / record 0x%x)" % (dump, record))
-          if cnt * zone + console + ftrace + pmsg > size:
-              fail.append("przs run past reg; ramoops_init_prz() would fail the probe")
-          # ramoops_probe() calls ramoops_init_prz() for console, then fprzs, then
-          # pmsg, each advancing paddr by its own size -- so the pmsg prz starts here.
-          paddr = base + cnt * zone + console + ftrace
+          if cnt * zone + console + ftrace + pmsg != size:
+              fail.append("reg 0x%x is not exactly cnt*zone + console + ftrace + pmsg "
+                          "(= 0x%x): leftover space is re-partitioned into the dmesg "
+                          "przs by ramoops_probe(), and one of them would then cover "
+                          "the log" % (size, cnt * zone + console + ftrace + pmsg))
           if console:
               fail.append("console-size 0x%x registers the pstore console: it untethers "
                           "the earlycon ~0.2 s into every boot, and the reading boot's "
                           "own compressed records land in the ring we came to read "
                           "(console-ramoops-14.txt, 14225 B of zlib)" % console)
-          if paddr != ec_addr:
-              fail.append("pmsg prz lands at 0x%x but the earlycon writes 0x%x"
-                          % (paddr, ec_addr))
-          if paddr < base + cnt * zone:
-              fail.append("pmsg prz at 0x%x overlaps the dmesg przs (0x%x..0x%x)"
-                          % (paddr, base, base + cnt * zone))
+          if pmsg:
+              fail.append("pmsg-size 0x%x puts a prz of OURS on the log zone: "
+                          "persistent_ram_post_init() saves it and then zap()s the "
+                          "header at our own probe, so the next boot finds an empty "
+                          "buffer and /sys/fs/pstore stays empty "
+                          "(the round after console-ramoops-14.txt)" % pmsg)
           if ecc:
               fail.append("ecc-size %d: prz capacity stops matching the earlycon ring, "
                           "and the recovery reader parses ecc 0/0" % ecc)
           # prz->buffer_size = zone - 12 (ram_core.c) and earlycon-ramoops uses zone - 12.
-          if pmsg != ec_size:
-              fail.append("pmsg prz 0x%x != earlycon zone 0x%x: two capacities on one "
-                          "header" % (pmsg, ec_size))
+          if log_size != ec_size:
+              fail.append("log reservation 0x%x != earlycon zone 0x%x: the ring would "
+                          "be sized twice" % (log_size, ec_size))
+          if log_addr != base + cnt * zone:
+              fail.append("log reservation at 0x%x but the dmesg przs end at 0x%x: "
+                          "either they overlap or there is a hole the page allocator "
+                          "gets" % (log_addr, base + cnt * zone))
           if ec_size > 0x40000:
               fail.append("earlycon zone 0x%x exceeds one early_ioremap (256K)" % ec_size)
           # Cross-check against the reader: the recovery inherits the stock 4.14
           # map (sdmmagpie.dtsi: reg 0x400000, record 0x80000, pmsg 0x200000,
-          # console 0x100000), so its pmsg prz is the zone we write, and its dmesg
-          # przs are 0x80000 each.  Any zone the recovery considers oversized or
-          # torn gets zap()ped, not exported.
+          # console 0x100000).  Its pmsg prz is a zone its own boot never writes
+          # (only /dev/pmsg0 does), so it is the one place the recovery hands the
+          # bytes back unchanged -- which is what the working rounds prove
+          # (pstore-mount-3.txt: pmsg-ramoops-0 23467 B; -4.txt: 187743 B).
           STOCK = dict(size=0x400000, record=0x80000, console=0x100000,
                        pmsg=0x200000)
           s_dump = STOCK["size"] - STOCK["console"] - STOCK["pmsg"]
@@ -1200,22 +1241,43 @@ jobs:
           s_zone = (s_dump // s_cnt) & ~1
           st_console = base + s_cnt * s_zone
           st_pmsg = st_console + STOCK["console"]
-          if not (st_pmsg <= ec_addr and ec_addr + ec_size <= st_pmsg + STOCK["pmsg"]):
-              fail.append("earlycon 0x%x+0x%x is outside the recovery's pmsg prz "
-                          "(0x%x+0x%x), the one zone it reads without its own console "
-                          "writer behind it" % (ec_addr, ec_size, st_pmsg, STOCK["pmsg"]))
+          if ec_addr != st_pmsg:
+              fail.append("earlycon at 0x%x but the recovery's pmsg prz (the one zone "
+                          "it reads without its own console writer behind it) is at "
+                          "0x%x" % (ec_addr, st_pmsg))
+          if not (base >= st_console - 0x200000 and
+                  log_addr + log_size <= base + STOCK["size"]):
+              fail.append("the two reservations (0x%x..0x%x) leave the stock 0x%x "
+                          "window, so a zone the recovery owns could be shared"
+                          % (base, log_addr + log_size, STOCK["size"]))
           if record != STOCK["record"]:
               fail.append("record-size 0x%x differs from the recovery's 0x%x dmesg "
                           "przs, whose reader rejects a larger cursor"
                           % (record, STOCK["record"]))
-          if size > STOCK["size"]:
-              fail.append("reg 0x%x is larger than the stock 0x%x reservation"
-                          % (size, STOCK["size"]))
+          if size + log_size > STOCK["size"]:
+              fail.append("reg 0x%x plus the log zone 0x%x is larger than the stock "
+                          "0x%x reservation" % (size, log_size, STOCK["size"]))
+          if ec_addr != log_addr:
+              fail.append("the earlycon writes 0x%x but the reservation covers 0x%x: "
+                          "an unreserved log zone is a zone the buddy allocator can "
+                          "hand to a page" % (ec_addr, log_addr))
+          # no-map is not decoration.  Without it the pages stay in the System RAM
+          # linear map, so the buddy allocator can hand the ring to a page cache and
+          # the log is overwritten by something that never heard of it.  A cached
+          # alias is the other half: the earlycon writes through ioremap().
+          log_props = subprocess.run(["fdtget", "-p", "dtb", LOGNODE],
+                                     capture_output=True, text=True).stdout.split()
+          if "no-map" not in log_props:
+              fail.append("%s has no no-map: the ring would be in the linear map and "
+                          "reusable by the page allocator (props: %s)"
+                          % (LOGNODE, " ".join(sorted(log_props)) or "none"))
           if fail:
               sys.exit("ramoops geometry: " + "; ".join(fail))
-          print("ramoops: dmesg prz 0x%x+0x%x, pmsg prz 0x%x+0x%x, ring 0x%x -- matches "
-                "earlycon=ramoops,0x%x,0x%x, and no console prz"
-                % (base, cnt * zone, paddr, pmsg, pmsg - 12, ec_addr, ec_size))
+          print("ramoops: dmesg prz 0x%x+0x%x (4 x 0x%x), log zone 0x%x+0x%x reserved but "
+                "unowned, ring 0x%x -- matches earlycon=ramoops,0x%x,0x%x, no console prz, "
+                "no pmsg prz"
+                % (base, cnt * zone, zone, log_addr, log_size, log_size - 12,
+                   ec_addr, ec_size))
           PYEOF
           gdsc=/soc/qcom,gdsc@177004
           # The vendor gdsc-regulator must not probe raw-offset windows
@@ -1462,8 +1524,24 @@ jobs:
           # over a stamp line (the 2026-11-28 04:0x run).  A stamp must never be
           # able to break a build, so every failure path lands on $GITHUB_SHA.
           if [ "$(git -C "$GITHUB_WORKSPACE" rev-list --parents -n1 HEAD | wc -w)" -gt 2 ]; then
-            head_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD^2 2>/dev/null || echo "$GITHUB_SHA")
             stamp_kind=pull-request-merge
+            # HEAD^2 names the branch head, but a fetch-depth:1 checkout cannot
+            # resolve it, and $GITHUB_SHA is the MERGE sha -- the wrong answer,
+            # because the kernel banner is that same merge sha and cannot tell a
+            # round apart.  The 2026-11-28 capture's head= line named
+            # 6e6ae27fdc3b (the merge of a9b76bd5d) and cost two rounds of
+            # "is this even the build I flashed".  A merge commit's subject line
+            # holds the branch head and lives in HEAD's own object, so fall back
+            # to parsing it; `# stamp=` records which case produced the value.
+            head_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse -q --verify 'HEAD^2' 2>/dev/null \
+              || git -C "$GITHUB_WORKSPACE" log -1 --format=%s HEAD | \
+                   sed -n 's/^Merge \([0-9a-f]\{40\}\) into .*/\1/p')
+            if [ -z "$head_sha" ]; then
+              head_sha="$GITHUB_SHA"
+              stamp_kind=pull-request-merge-unresolved
+            elif [ "$head_sha" = "$GITHUB_SHA" ]; then
+              stamp_kind=pull-request-merge-same-as-merge
+            fi
           else
             head_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD 2>/dev/null || echo "$GITHUB_SHA")
             stamp_kind=checkout
@@ -1521,8 +1599,24 @@ jobs:
             fi
           done
           if [ "$(git -C "$GITHUB_WORKSPACE" rev-list --parents -n1 HEAD | wc -w)" -gt 2 ]; then
-            head_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD^2 2>/dev/null || echo "$GITHUB_SHA")
             stamp_kind=pull-request-merge
+            # HEAD^2 names the branch head, but a fetch-depth:1 checkout cannot
+            # resolve it, and $GITHUB_SHA is the MERGE sha -- the wrong answer,
+            # because the kernel banner is that same merge sha and cannot tell a
+            # round apart.  The 2026-11-28 capture's head= line named
+            # 6e6ae27fdc3b (the merge of a9b76bd5d) and cost two rounds of
+            # "is this even the build I flashed".  A merge commit's subject line
+            # holds the branch head and lives in HEAD's own object, so fall back
+            # to parsing it; `# stamp=` records which case produced the value.
+            head_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse -q --verify 'HEAD^2' 2>/dev/null \
+              || git -C "$GITHUB_WORKSPACE" log -1 --format=%s HEAD | \
+                   sed -n 's/^Merge \([0-9a-f]\{40\}\) into .*/\1/p')
+            if [ -z "$head_sha" ]; then
+              head_sha="$GITHUB_SHA"
+              stamp_kind=pull-request-merge-unresolved
+            elif [ "$head_sha" = "$GITHUB_SHA" ]; then
+              stamp_kind=pull-request-merge-same-as-merge
+            fi
           else
             head_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD 2>/dev/null || echo "$GITHUB_SHA")
             stamp_kind=checkout

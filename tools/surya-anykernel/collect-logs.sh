@@ -126,6 +126,14 @@ collect() {
   ls -la /cache/recovery /data/recovery >> "$dir/recovery-pstore-trace.txt" 2>&1;  dmesg > "$dir/twrp-current-dmesg.txt" 2>/dev/null;
   printf 'Previous boot files copied: %s\ntwrp-current-dmesg.txt is from recovery, not the failed kernel.\n' "$count" > "$dir/README.txt";
   printf 'Send pmsg-ramoops-0.txt plus pstore-index.txt: that is the boot under test.\nA file with printable near 38%% is a compressed prz, not an empty boot -- see\nDocumentation/arm64/surya-bringup.rst.\n' >> "$dir/README.txt";
+  # The installer records what it flashed; a report that carries it cannot be
+  # mistaken for an earlier round, which the 2026-11-28 misread did to us.
+  for stamp in /sdcard/Surya-boot/last-flashed.txt /persist/Surya-last-flashed.txt; do
+    [ -s "$stamp" ] || continue;
+    cp "$stamp" "$dir/flashed-stamp.txt" 2>/dev/null;
+    printf 'flashed-stamp.txt: %s\n' "$(head -1 "$stamp" 2>/dev/null)" >> "$dir/README.txt";
+    break;
+  done;
   sync;
   ui_print "Previous boot files copied: $count";
   ui_print "Report saved in $dir";

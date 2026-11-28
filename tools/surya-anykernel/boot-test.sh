@@ -38,11 +38,23 @@ dtbo_capacity=$(blockdev --getsize64 "$DTBO_BLOCK") || abort 'Cannot read DTBO c
 # Name the build in the install log, which is part of the report the board sends
 # back anyway; a boot that cannot say which kernel it ran is a boot that cannot
 # be reasoned about.
+#
+# Two rules, both learned from moved-cache_recovery_log-7.txt.  Print the stamp
+# ONE LINE PER ui_print: the file's second line is `head=<sha>`, and passing a
+# multi-line string to ui_print made recovery echo `E:unknown command
+# [head=6e6ae27fdc3b...]` -- an error line inside the only file that shows a
+# flash succeeded.  And write the same lines next to the log the collector
+# gathers, because the kernel banner in the ramoops ring is not proof of what
+# was flashed: a ring accumulates across boots, and this file is.
 if [ -s "$AKHOME/SURYA-VERSION" ]; then
-  ui_print "$(cat "$AKHOME/SURYA-VERSION")";
+  while IFS= read -r line; do ui_print "SURYA $line"; done < "$AKHOME/SURYA-VERSION";
 else
   ui_print 'SURYA-VERSION missing: this zip did not come from the stamped build.';
 fi;
+for out in /sdcard/Surya-boot/last-flashed.txt /persist/Surya-last-flashed.txt; do
+  mkdir -p "$(dirname "$out")" 2>/dev/null || continue;
+  cp "$AKHOME/SURYA-VERSION" "$out" 2>/dev/null && break;
+done;
 ui_print 'Experimental: writing Boot and DTBO only. Do not reboot if installation fails.';
 split_boot;
 [ -s "$SPLITIMG/dtb" ] || abort 'Reference boot does not contain a separate DTB.';
@@ -73,16 +85,20 @@ patch_cmdline 'softlockup_panic=' 'softlockup_panic=1';
 # wraps the 2 MiB console ramoops prz mid-boot (capture 11 came back interleaved
 # with the next boot).  gcc_sm6150_probe() prints its own stage markers instead.
 #
-# The address below is the whole log path, so it is worth stating why it is the
-# pmsg prz and not the console prz (see Documentation/arm64/surya-bringup.rst):
-# if /reserved-memory/ramoops@9d800000 declares console-size at all, every boot
-# of this kernel -- including the TWRP boot that comes to read the log -- calls
-# pstore_register() with PSTORE_FLAGS_CONSOLE, which (a) untethers this earlycon
-# ~0.2 s later, truncating the boot under test, and (b) writes the reading boot's
-# own records into the same ring.  With CONFIG_PSTORE_DEFLATE_COMPRESS_DEFAULT=y
-# those records are zlib, which is what console-ramoops-14.txt was: 14225 bytes,
-# 38 % printable, no DEFLATE stream start anywhere, no line long enough for
-# strings -n 14.  pmsg has no kernel writer, so the ring survives to be copied.
+# The address below is the whole log path, so state what owns what.  Two rules
+# and one fact, all of them paid for in flash rounds (Documentation/arm64/
+# surya-bringup.rst has the long version):
+#   1. the ramoops node must declare no console prz, or pstore_register() adds a
+#      console of its own ~0.2 s in, untethers this earlycon and writes its own
+#      records over the ring (capture 14: 14225 B, 38 % printable);
+#   2. it must declare no prz AT ALL on this zone, not even pmsg: a prz of ours
+#      gets snapshot-and-zapped at our own probe (PRZ_FLAG_ZAP_OLD, see
+#      fs/pstore/ram.c:589), which zeroes the ring header 0.2 s into the boot we
+#      are trying to capture -- that is why /sys/fs/pstore came back empty in
+#      pstore-mount-6.txt.  The zone is a bare no-map reservation instead.
+#   3. the reader is the stock 4.14 recovery kernel, and in its map this zone is
+#      the pmsg prz, so the file to read is pmsg-ramoops-0; its own console prz
+#      ends where our ring starts.
 grep -Eq '^cmdline=.*earlycon=ramoops,0x9da00000,0x40000( |$)' "$SPLITIMG/header" ||
   abort 'Log argument missing; nothing written.';
 # What the kernel actually runs with is the cmdline in the boot header, not the
