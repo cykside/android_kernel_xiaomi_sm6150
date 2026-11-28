@@ -1911,3 +1911,75 @@ staying responsive while a probe kworker is stuck, and it takes three rounds
 instead of six, so the panic lands at about 60 s: past every bounded wait in
 the pass, and well before anyone reaches for the power key and turns "no capture"
 back into the situation we are trying to end.
+
+Five boots that left no capture, and the register map that caused them
+---------------------------------------------------------------------
+
+``47f1ca089`` was the build whose whole purpose was to make an empty
+``/sys/fs/pstore`` impossible: the GCC stage markers, ``softlockup_panic=1`` on
+both the DTB and the installer, and a ``panic()`` from the bring-up watchdog at
+about 60 s.  Five flash attempts later the answer was still nothing -- Poco boot
+logo, then a white screen, then a reboot.  That is information, and it is the
+narrowest kind: a boot that leaves nothing behind did not live long enough to
+reach a 60 s timer, and the reset that ended it was not the warm one the prz
+survives.  Both halves point at the same failure mode as the GCC MISC writes in
+console-ramoops-13.txt: the CPU stops *inside* an MMIO access, with interrupts
+disabled, so no lockup detector runs, no oops prints, and the PON reset that
+follows drops the DRAM the capture lives in.
+
+The regression window was exact, which made the search short.  Every build up to
+and including ``225695eff`` produced a capture; every build from ``6c013cafa``
+(the one that gave ``ufsphy_mem@1d87000`` a driver it could match) produced
+none.  Binding that PHY newly runs ``clk_prepare_enable()`` on the UFS branch
+clocks -- the first code ever to touch them -- and those clocks' register
+addresses had been rewritten in the probe by ``41d0eeb38`` ("clk: qcom: use
+SDMMagpie UFS clock offsets in the Surya trial")::
+
+    clock                          6.1 gcc-sm6150.c   4.14 vendor   41d0eeb38
+    gcc_aggre_ufs_phy_axi_clk      0x770c0            0x770c0       0x82024
+    gcc_ufs_phy_axi_clk            0x77010            0x77010       0x77038
+    gcc_ufs_phy_unipro_core_clk    0x77040            0x77040       0x7708c
+    gcc_ufs_phy_ice_core_clk       0x77044            0x77044       0x77090
+    gcc_ufs_phy_phy_aux_clk        0x77078            0x77078       0x77094
+    gcc_ufs_phy_phy_aux_clk_src    0x7707c            (no such clk) 0x77098
+
+The two drivers that describe this SoC agree on all five branch offsets, and not
+one of the six numbers ``41d0eeb38`` installed names a register in either of
+them: they are SDMMagpie's, and on SM6150 they are unimplemented GCC space,
+still inside the node's ``reg = <0x100000 0x1f0000>`` so every access is issued
+instead of faulting in the iomem layer.  The premise -- a board whose stock DTB
+came from an SDMMagpie kernel therefore needs SDMMagpie's register map -- is
+simply wrong; the clock IDs in the DTB index *this* driver's table, and the
+register map belongs to the SoC.
+
+So the fix in this round is a deletion.  ``gcc_sm6150_fixup_surya_ufs()`` is
+gone, along with its call in ``gcc_sm6150_probe()``; the ``xiaomi,surya-gcc``
+compatible stays, because it also selects the stage markers and the MISC skip,
+and ``surya-sm6150-v2-test.dts`` now says so where it used to advertise the
+offsets.  Two guards keep it from returning: CI compares the five ``halt_reg``
+values in ``gcc-sm6150.c`` against the numbers above, and CI rejects any runtime
+assignment to ``halt_reg``, ``hwcg_reg``, ``clkr.enable_reg`` or ``cmd_rcgr`` in
+that file.
+
+The probe gained one line instead of a fixup, printed after ``mapped`` and
+before any MMIO::
+
+    Surya gcc: ufs halt 770c0 77010 77044 77078 77040 src 7707c
+
+so the next capture names the table the running kernel actually used, rather
+than leaving it to git.  Expected after this change, in order: that line, then
+``misc-skipped``, ``dfs``, ``register``, ``Registered GCC clocks``, then the
+chain snapshot with ``/soc/ufsphy_mem@1d87000`` as ``enabled; driver assigned``.
+From there either the host reaches ``scsi 0:0:0:0: Attached scsi generic sg0``
+and ``init:`` mounts ``/vendor``, or it fails with an errno -- and an errno is
+a win, because it is the first thing about this path that is not guesswork.
+
+If the next five attempts still leave ``/sys/fs/pstore`` empty, then the
+unimplemented-offset read is not the only thing that can stop this CPU, and the
+next experiment is already chosen: bind the same driver and stub
+``ufs_qcom_phy_qmp_v4_init()`` so the PHY is present but writes nothing, which
+separates "a driver must exist for the node" from "the PHY's hardware
+programming is what dies".  Also check the first line of any capture for
+``Linux version 6.1.177-surya-g<sha>``: two adjacent builds here differ only in
+that suffix, and reasoning about a flash whose ``Linux version`` was never read
+is how a wrong theory survives a round trip.

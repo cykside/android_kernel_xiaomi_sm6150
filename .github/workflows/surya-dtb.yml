@@ -1092,6 +1092,45 @@ jobs:
             echo '::error::the GCC MISC writes must sit after the misc-skipped marker, i.e. only in the non-Surya branch'
             exit 1
           fi
+          # The UFS branch clocks must keep the offsets this driver ships with.
+          # Commit 41d0eeb38 retargeted them to SDMMagpie numbers, which name no
+          # SM6150 register at all; the enable path then pokes unimplemented GCC
+          # space, which is exactly how the MISC writes stopped this CPU.  It only
+          # became fatal once 6c013cafa bound a driver that enables those clocks,
+          # and it cost five captures with an empty /sys/fs/pstore.  The expected
+          # values are the SoC register map: this file and the 4.14 vendor
+          # gcc-sm6150.c agree on all five.
+          python3 - "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c" <<'PYTHON'
+          import re
+          import sys
+
+          src = open(sys.argv[1]).read()
+          expected = {
+              "gcc_aggre_ufs_phy_axi_clk": "0x770c0",
+              "gcc_ufs_phy_axi_clk": "0x77010",
+              "gcc_ufs_phy_unipro_core_clk": "0x77040",
+              "gcc_ufs_phy_ice_core_clk": "0x77044",
+              "gcc_ufs_phy_phy_aux_clk": "0x77078",
+          }
+          for name, want in expected.items():
+              body = re.search(r'^static struct clk_branch %s = \{(.*?)^\};' % name,
+                               src, re.M | re.S)
+              if not body:
+                  sys.exit('::error::%s is missing from gcc-sm6150.c' % name)
+              got = re.search(r'\.halt_reg = (0x[0-9a-f]+),', body.group(1))
+              if not got or got.group(1) != want:
+                  sys.exit('::error::%s halt_reg is %s, but SM6150 names it %s' %
+                           (name, got.group(1) if got else 'absent', want))
+          for pattern, field in ((r'^\s*\w+(->|\.)halt_reg\s*=', 'halt_reg'),
+                                 (r'^\s*\w+(->|\.)hwcg_reg\s*=', 'hwcg_reg'),
+                                 (r'^\s*\w+(->|\.)clkr\.enable_reg\s*=', 'enable_reg'),
+                                 (r'^\s*\w+(->|\.)cmd_rcgr\s*=', 'cmd_rcgr')):
+              hit = re.search(pattern, src, re.M)
+              if hit:
+                  sys.exit('::error::gcc-sm6150.c must not retarget a clock %s at '
+                           'runtime (%s): the offsets belong to this SoC, not to '
+                           'the board the stock DTB came from' % (field, hit.group(0).strip()))
+          PYTHON
           if ! grep -q 'Surya gcc: ' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c"; then
             echo '::error::Surya needs the pr_notice stage markers in gcc_sm6150_probe() (see console-ramoops-11.txt)'
             exit 1

@@ -3450,35 +3450,38 @@ static void gcc_sm6150_fixup_sa6155(struct platform_device *pdev)
 	vdd_mx.cur_level = VDD_NUM_SA6155;
 }
 
-/* The SDMMagpie UFS branches do not share the SM6150 offsets. */
-static void gcc_sm6150_fixup_surya_ufs(void)
-{
-	static const struct {
-		struct clk_branch *clk;
-		u32 reg;
-	} branches[] = {
-		{ &gcc_aggre_ufs_phy_axi_clk, 0x82024 },
-		{ &gcc_aggre_ufs_phy_axi_hw_ctl_clk, 0x82024 },
-		{ &gcc_ufs_phy_axi_clk, 0x77038 },
-		{ &gcc_ufs_phy_axi_hw_ctl_clk, 0x77038 },
-		{ &gcc_ufs_phy_ice_core_clk, 0x77090 },
-		{ &gcc_ufs_phy_ice_core_hw_ctl_clk, 0x77090 },
-		{ &gcc_ufs_phy_phy_aux_clk, 0x77094 },
-		{ &gcc_ufs_phy_phy_aux_hw_ctl_clk, 0x77094 },
-		{ &gcc_ufs_phy_unipro_core_clk, 0x7708c },
-		{ &gcc_ufs_phy_unipro_core_hw_ctl_clk, 0x7708c },
-	};
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(branches); i++) {
-		struct clk_branch *clk = branches[i].clk;
-
-		clk->halt_reg = branches[i].reg;
-		clk->hwcg_reg = branches[i].reg;
-		clk->clkr.enable_reg = branches[i].reg;
-	}
-	gcc_ufs_phy_phy_aux_clk_src.cmd_rcgr = 0x77098;
-}
+/*
+ * Do not retarget clock registers from the probe.
+ *
+ * Commit 41d0eeb38 ("clk: qcom: use SDMMagpie UFS clock offsets in the Surya
+ * trial") pointed halt_reg, hwcg_reg and clkr.enable_reg of the five UFS
+ * branches at 0x82024, 0x77038, 0x7708c, 0x77090 and 0x77094, and
+ * gcc_ufs_phy_phy_aux_clk_src.cmd_rcgr at 0x77098, because the board's stock
+ * DTB came from an SDMMagpie-based kernel.  The register map belongs to the
+ * SoC, not to the DTB, and both drivers that describe this SoC agree: this
+ * file and the 4.14 vendor gcc-sm6150.c put gcc_aggre_ufs_phy_axi_clk at
+ * 0x770c0, gcc_ufs_phy_axi_clk at 0x77010, gcc_ufs_phy_unipro_core_clk at
+ * 0x77040, gcc_ufs_phy_ice_core_clk at 0x77044, gcc_ufs_phy_phy_aux_clk at
+ * 0x77078 and gcc_ufs_phy_phy_aux_clk_src's CMD_RCGR at 0x7707c.  Not one of
+ * the six numbers the retargeting installed names a register of either
+ * driver: they are unimplemented GCC offsets.
+ *
+ * That was harmless for as long as nothing enabled those clocks -- the UFS
+ * host never got past "core_clk clk get failed, -517", so the enable path
+ * never ran.  Binding the QMP v4 PHY (6c013cafa) made clk_prepare_enable()
+ * run on a branch whose halt_reg points into unimplemented space, which is
+ * the same class of access that already stopped this CPU inside the GCC MISC
+ * writes: the CPU hangs inside the access with interrupts disabled, so no
+ * soft lockup is reported, and the reset that follows is a PON reset that
+ * drops the ramoops region, so the boot leaves no capture at all.  Five
+ * attempts on 47f1ca089 all came back with an empty /sys/fs/pstore.
+ *
+ * Deleting the retargeting is the fix, not a workaround: with the native
+ * offsets the enable is a clear of BIT(31) on a branch the bootloaders left
+ * running, which is what the 4.14 driver does on every boot of this phone.
+ * CI checks the five halt_reg values and forbids runtime assignment to them,
+ * so this cannot come back quietly.
+ */
 
 /*
  * Surya bring-up: this probe is the single gate in front of
@@ -3544,8 +3547,6 @@ static int gcc_sm6150_probe(struct platform_device *pdev)
 						"qcom,sa6155-gcc");
 	if (is_sa6155)
 		gcc_sm6150_fixup_sa6155(pdev);
-	else if (of_device_is_compatible(pdev->dev.of_node, "xiaomi,surya-gcc"))
-		gcc_sm6150_fixup_surya_ufs();
 
 	gcc_sm6150_stage(pdev, "map");
 	regmap = qcom_cc_map(pdev, &gcc_sm6150_desc);
@@ -3554,6 +3555,22 @@ static int gcc_sm6150_probe(struct platform_device *pdev)
 		return PTR_ERR(regmap);
 	}
 	gcc_sm6150_stage(pdev, "mapped");
+
+	/*
+	 * Name the registers the UFS branches will actually be poked at, so the
+	 * next capture proves which table is live in the running kernel instead
+	 * of leaving it to git.  One short line on purpose: the pstore console
+	 * wraps a longer one.  Expect
+	 * "Surya gcc: ufs halt 770c0 77010 77044 77078 77040 src 7707c".
+	 */
+	if (gcc_sm6150_surya)
+		pr_notice("Surya gcc: ufs halt %05x %05x %05x %05x %05x src %05x\n",
+			  gcc_aggre_ufs_phy_axi_clk.halt_reg,
+			  gcc_ufs_phy_axi_clk.halt_reg,
+			  gcc_ufs_phy_ice_core_clk.halt_reg,
+			  gcc_ufs_phy_phy_aux_clk.halt_reg,
+			  gcc_ufs_phy_unipro_core_clk.halt_reg,
+			  gcc_ufs_phy_phy_aux_clk_src.cmd_rcgr);
 
 	/*
 	 * None of the register writes below happen on Surya, and capture 13 is

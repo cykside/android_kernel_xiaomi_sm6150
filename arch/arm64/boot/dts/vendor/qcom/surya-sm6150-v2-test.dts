@@ -39,7 +39,14 @@
 	no-map;
 };
 
-/* Select the SDMMagpie UFS clock offsets without changing the clock IDs. */
+/*
+ * "xiaomi,surya-gcc" selects the Surya behaviour of the GCC probe: the
+ * one-word stage markers and the skip of the SM8150 MISC/always-on writes.
+ * It used to select a retargeting of the UFS branch clock registers to
+ * SDMMagpie offsets as well; that was wrong (SM6150's own driver and the 4.14
+ * vendor driver agree) and it cost five captures, so the compatible must not
+ * grow another hardware fixup here.  See gcc_sm6150_probe().
+ */
 &gcc {
 	compatible = "xiaomi,surya-gcc", "qcom,sm6150-gcc", "syscon";
 };
