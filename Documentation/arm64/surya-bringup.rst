@@ -1867,7 +1867,8 @@ PON reset, and DDR is gone.  Nothing to read, no matter how much of the buffer
 was written.
 
 Two changes make a capture unconditional while the board is in bring-up, and
-neither is a boot fix -- they exist so the next round cannot be lost:
+neither is a boot fix -- they exist so the next round cannot be lost.  Read the
+correction below this section before trusting the first bullet on its own:
 
 * ``softlockup_panic=1``, in ``/chosen`` and in the installer.  The soft lockup
   detector is already built into this kernel (``CONFIG_SOFTLOCKUP_DETECTOR=y``
@@ -1891,3 +1892,22 @@ boots into recovery on its own.  Both knobs come off the moment the storage path
 is real: the panic is guarded by the same ``surya_chain_settled`` flag the
 watchdog uses, and the two command-line changes are one line each in
 ``surya-sm6150.dts`` and ``tools/surya-anykernel/anykernel.sh``.
+
+Correction, same day: the command-line knob is the weaker of the two.
+``softlockup_panic=1`` is parsed (``__setup("softlockup_panic=", ...)`` in
+``kernel/watchdog.c``) and the detector is built, but a lockup report needs that
+CPU's watchdog hrtimer to run -- so a CPU stuck inside an MMIO read with
+interrupts disabled is not reported at all, and there is no harder backstop to
+turn to here: ``HARDLOCKUP_DETECTOR`` depends on
+``HAVE_HARDLOCKUP_DETECTOR_PERF || HAVE_HARDLOCKUP_DETECTOR_ARCH`` and
+``arch/arm64/Kconfig`` selects neither, so it cannot even be enabled in this
+configuration.  The guarantee is therefore the bring-up watchdog, and its first
+version had a defect of its own: it was armed with
+``queue_delayed_work_on(1, ...)``.  A work item pinned to CPU 1 is exactly the
+thing that fails to run when CPU 1 is the wedged one, which is the scenario the
+watchdog exists for -- and CPU 1 is a normal home for a deferred-probe kworker.
+It now runs on the boot CPU (``surya_watchdog_cpu()``), which the logs show
+staying responsive while a probe kworker is stuck, and it takes three rounds
+instead of six, so the panic lands at about 60 s: past every bounded wait in
+the pass, and well before anyone reaches for the power key and turns "no capture"
+back into the situation we are trying to end.

@@ -661,6 +661,29 @@ static bool surya_wait_probes(unsigned int secs)
 	       !atomic_read(&surya_attempt_busy);
 }
 
+static int surya_watchdog_cpu(void)
+{
+	/*
+	 * Never arm this on the CPU that might be stuck.  The point of the
+	 * watchdog is to fire while a *different* CPU is wedged inside a device
+	 * access, and a work item pinned to a wedged CPU simply never runs --
+	 * which is how the round after fb3fd29ca ended with an empty pstore: it
+	 * was armed on CPU 1, and CPU 1 is as likely as any other to be the
+	 * deferred-probe kworker's victim.  Nor is there a backstop: arm64 in
+	 * this tree selects neither HAVE_HARDLOCKUP_DETECTOR_PERF nor
+	 * HAVE_HARDLOCKUP_DETECTOR_ARCH, so HARDLOCKUP_DETECTOR cannot be
+	 * enabled, and a wedge with interrupts disabled is invisible to the
+	 * softlockup watchdog as well (its hrtimer has to run on that CPU) --
+	 * which is why softlockup_panic=1 is a convenience here and this work
+	 * item is the actual guarantee.
+	 *
+	 * CPU 0 is init's CPU.  Captures 12 and 13 show T1 printing at 4.84 s
+	 * and 14.88 s while the probe kworker was already stuck for seconds, so
+	 * the boot CPU stays responsive exactly when it matters.
+	 */
+	return cpu_online(0) ? 0 : raw_smp_processor_id();
+}
+
 static void surya_wedge_watchdog(struct work_struct *work);
 static DECLARE_DELAYED_WORK(surya_wedge_work, surya_wedge_watchdog);
 
@@ -696,9 +719,16 @@ static void surya_wedge_watchdog(struct work_struct *work)
 		pr_notice("Surya bringup: provider chain settled at %s\n",
 			  surya_chain_at);
 	}
-	if (++rounds < 6) {
-		queue_delayed_work_on(1, system_long_wq, &surya_wedge_work,
-				      20 * HZ);
+	if (++rounds < 3) {
+		/*
+		 * Three rounds of 20 s: long enough to sit past every bounded
+		 * wait in the pass (the 10 s probe wait and the 20 s chain wait)
+		 * and short enough that nobody reaches for the power key first --
+		 * and a power key here means a hard reset, dropped DDR, and no
+		 * capture at all.
+		 */
+		queue_delayed_work_on(surya_watchdog_cpu(), system_long_wq,
+				      &surya_wedge_work, 20 * HZ);
 		return;
 	}
 
@@ -842,8 +872,8 @@ static int deferred_probe_initcall(void)
 		 */
 		queue_delayed_work_on(0, system_long_wq,
 				      &surya_ufs_snapshot_work, 4 * HZ);
-		queue_delayed_work_on(1, system_long_wq, &surya_wedge_work,
-				      20 * HZ);
+		queue_delayed_work_on(surya_watchdog_cpu(), system_long_wq,
+				      &surya_wedge_work, 20 * HZ);
 	}
 
 	debugfs_create_file("devices_deferred", 0444, NULL, NULL,
