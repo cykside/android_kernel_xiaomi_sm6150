@@ -2129,8 +2129,15 @@ the bootloader will use, and the new header guard let the flash through, so the
 installer fix from the previous round works.  The stamp is not a wrong zip
 either: ``a5684c8d8572`` is ``refs/pull/1/merge``, the synthetic commit GitHub
 builds a ``pull_request`` run from (head ``b2529a124`` + base ``4ae872acf``).
-``SURYA-VERSION`` now also carries ``head=<sha>`` so a report can be matched to a
-branch commit without that detour.
+``SURYA-VERSION`` now also carries ``head=<sha>`` (plus ``# stamp=`` naming which
+rule produced it) so a report can be matched to a branch commit without that
+detour.  Reading that line needs the parent order, which is not the intuitive
+one: in ``refs/pull/N/merge`` the *first* parent is the base and the *second* is
+the head -- measured on this repository, ``b19085e465ec`` (PR #1, 2026-11-28)
+lists ``4ae872acf`` then ``f9dab5026`` -- so the stamp takes ``HEAD^2``.  The
+first version of the stamp took ``HEAD^1`` and would have recorded the base
+commit, which is the kind of wrong-but-plausible number that costs a flash
+cycle to notice.
 
 What was still missing was not a kernel bug but a buffer the reader refuses::
 
@@ -2309,6 +2316,19 @@ hit to its Makefile symbol, requires that symbol to be ``y`` in the resolved
 config, and requires the calibration table of the header that driver includes to
 still hold the 88 entries stock holds.  A future switch to another v3/v4 file
 would have to come with a deliberate edit to this number, not with a config tweak.
+
+One asymmetry with stock survived the switch and is worth naming, because it is
+the only place this driver does something the 4.14 one does not:
+``ufs_qcom_phy_qmp_v3_init()`` takes the host's reset line
+(``of_reset_control_get_exclusive_by_index()`` on ``resets = <&ufshc_mem 0>``).
+That is safe here for a checkable reason rather than by hope -- the DTB gives
+``ufshc@1d84000`` ``#reset-cells = <1>`` and ``drivers/ufs/host/ufs-qcom.c``
+calls ``devm_reset_controller_register()`` on the host, so the provider exists
+before any PHY is powered on (the host reaches the PHY through ``devm_phy_get``
+during its own probe).  Both facts are gated now.  If they ever stop holding the
+failure is loud, not silent: ``dev_err_probe()`` prints "failed to acquire UFS
+PHY reset" with the errno, which is the line to look for if a capture shows
+``enabled; driver assigned`` on the PHY but no ``scsi 0:0:0:0``.
 
 
 The five flash loops were not lost to the reset -- the reader threw them away

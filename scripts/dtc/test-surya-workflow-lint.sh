@@ -258,4 +258,65 @@ YML
 	exit 1
 }
 
+# A bare `git` in a step whose cwd is a temp directory is exit 128 -- "not a git
+# repository" -- and under set -e that ends a build that had already succeeded.
+cat > "$tmp/bare-git.yml" <<'YML'
+name: Bare git
+on:
+  pull_request:
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stamp
+        run: |
+          work=$(mktemp -d)
+          cd "$work/installer"
+          head_sha=$(git rev-parse HEAD)
+          printf 'head=%s\n' "$head_sha" > SURYA-VERSION
+YML
+if "$lint" "$tmp/bare-git.yml" > "$tmp/git.out" 2>&1; then
+	echo 'a bare git call in a step outside the checkout was accepted' >&2
+	exit 1
+fi
+grep -qF 'runs bare "git"' "$tmp/git.out"
+
+cat > "$tmp/anchored-git.yml" <<'YML'
+name: Anchored git
+on:
+  pull_request:
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stamp
+        run: |
+          work=$(mktemp -d)
+          cd "$work/installer"
+          if [ "$(git -C "$GITHUB_WORKSPACE" rev-list --parents -n1 HEAD | wc -w)" -gt 2 ]; then
+            head_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD^2 2>/dev/null || echo "$GITHUB_SHA")
+          else
+            head_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD 2>/dev/null || echo "$GITHUB_SHA")
+          fi
+          printf 'head=%s\n' "$head_sha" > "$work/installer/SURYA-VERSION"
+YML
+"$lint" "$tmp/anchored-git.yml" > /dev/null 2>&1 || {
+	echo 'the -C anchored git form was rejected' >&2
+	exit 1
+}
+
+# And the anchored form has to survive being run for real where the cwd is not a
+# repository -- which is the condition that produced the 128.
+here_repo=$(CDPATH='' cd -- "$here/../.." && pwd)
+scratch=$(mktemp -d)
+( cd "$scratch" && GITHUB_WORKSPACE="$here_repo" GITHUB_SHA=deadbeef sh -e -c '
+  if [ "$(git -C "$GITHUB_WORKSPACE" rev-list --parents -n1 HEAD | wc -w)" -gt 2 ]; then
+    head_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD^2 2>/dev/null || echo "$GITHUB_SHA")
+  else
+    head_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD 2>/dev/null || echo "$GITHUB_SHA")
+  fi
+  test "${#head_sha}" -eq 40 || { echo "stamp produced a non-sha value: $head_sha" >&2; exit 1; }
+' ) || { echo 'the anchored stamp snippet fails outside a repository' >&2; exit 1; }
+rm -rf -- "$scratch"
+
 echo 'surya-workflow-lint self-test passed'

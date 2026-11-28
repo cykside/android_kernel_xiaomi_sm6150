@@ -168,6 +168,38 @@ def bash_check(script, name):
 CWD_SENSITIVE = ("drivers", "out", "arch", "Documentation")
 
 
+def leaves_checkout(script):
+    """True when a step changes directory somewhere that is not the checkout.
+
+    Gates written for such a step must name the checkout explicitly; a path or a
+    repository command that relies on the cwd silently reads a different tree --
+    or nothing at all.
+    """
+    moves = [line.strip() for line in script.split("\n") if line.strip().startswith("cd ")]
+    return bool(moves) and not all("GITHUB_WORKSPACE" in move for move in moves)
+
+
+def unscoped_git(script):
+    """Yield line numbers of bare `git` in a step whose cwd is not the checkout.
+
+    "git rev-parse HEAD" there does not fail with a helpful message; it fails
+    with exit 128 ("not a git repository"), and under a step's set -e that ends
+    a build which had already produced a bootable Image.gz -- a version stamp
+    line did exactly that on 2026-11-28.  -C or an explicit GIT_DIR is the fix.
+    """
+    if not leaves_checkout(script):
+        return
+    for number, line in enumerate(script.split("\n"), 1):
+        stripped = line.strip()
+        if stripped.startswith(("echo", "printf", "#")) or "::error::" in line:
+            continue
+        if not re.search(r"(?<![-\w])git(?=[ \t])", line):
+            continue
+        if re.search(r"git[ \t]+(-C[ \t]|--git-dir|-c[ \t]|config[ \t]+--)", line):
+            continue
+        yield number
+
+
 def cwd_relative_paths(script):
     """Yield (line_no, token) for repo paths that assume the checkout is the cwd.
 
@@ -177,9 +209,11 @@ def cwd_relative_paths(script):
     "passes" while having read nothing, or fails with a message that blames the
     tree instead of the path.
     """
-    moves = [line.strip() for line in script.split("\n") if line.strip().startswith("cd ")]
-    if not moves or all("GITHUB_WORKSPACE" in move for move in moves):
+    if not leaves_checkout(script):
         return
+    # git belongs in this list: it is a repository *state* reader, and one bare
+    # "git rev-parse" in a step that had cd'd into a temp directory ended a
+    # completed kernel build with exit 128 (a stamp line, nothing else).
     readers = r"\b(grep|fdtget|test|cat|sed|awk|head|tail|strings|cmp|cp|mv|sha256sum|python3?)\b"
     for number, line in enumerate(script.split("\n"), 1):
         stripped = line.strip()
@@ -258,6 +292,13 @@ def check_workflow(path, want_artifact_job):
                 err = bash_check(run, where)
                 if err:
                     problems.append(err)
+                for number in unscoped_git(run):
+                    problems.append(
+                        "%s: run line %d runs bare \"git\" while the step's cwd is "
+                        "not the checkout, which is not a repository (exit 128 "
+                        "under set -e); write \"git -C \"$GITHUB_WORKSPACE\"\""
+                        % (where, number)
+                    )
                 for number, token in cwd_relative_paths(run):
                     problems.append(
                         "%s: run line %d uses the cwd-relative repo path %r after "
