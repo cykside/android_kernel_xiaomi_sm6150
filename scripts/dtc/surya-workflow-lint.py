@@ -27,6 +27,7 @@ file cannot be read.
 """
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -157,6 +158,47 @@ def bash_check(script, name):
     return None
 
 
+# Kernel-tree directories that cannot exist inside a temporary installer
+# directory.  A gate that reaches for one of these by relative path is fine
+# while the workflow's cwd is the checkout, and silently finds nothing the
+# moment the step has cd'd elsewhere -- which is how a PHY gate came to report
+# "no driver under drivers/phy/qualcomm mentions qcom,ufs-phy-qmp-v3" for a
+# driver the configuration builds.  tools/ is deliberately absent: the
+# AnyKernel3 layout really does own a relative tools/ inside the installer.
+CWD_SENSITIVE = ("drivers", "out", "arch", "Documentation")
+
+
+def cwd_relative_paths(script):
+    """Yield (line_no, token) for repo paths that assume the checkout is the cwd.
+
+    Only meaningful in a step that leaves the checkout and does not come back:
+    `cd "$work/installer"` and friends.  A bare `drivers/...` operand there is
+    not an error, it is an empty grep -- and every gate built on that grep then
+    "passes" while having read nothing, or fails with a message that blames the
+    tree instead of the path.
+    """
+    moves = [line.strip() for line in script.split("\n") if line.strip().startswith("cd ")]
+    if not moves or all("GITHUB_WORKSPACE" in move for move in moves):
+        return
+    readers = r"\b(grep|fdtget|test|cat|sed|awk|head|tail|strings|cmp|cp|mv|sha256sum|python3?)\b"
+    for number, line in enumerate(script.split("\n"), 1):
+        stripped = line.strip()
+        # Only messages and comments are excluded outright: "if grep -q x
+        # out/surya/.config; then" is a keyword line *and* a file read, which
+        # is exactly what must not be skipped.
+        if stripped.startswith(("echo", "printf", "#")) or "::error::" in line:
+            continue
+        if "$GITHUB_WORKSPACE" in line:
+            continue  # this line is already anchored
+        for match in re.finditer(r"(?<![\w$/.-])(" + "|".join(CWD_SENSITIVE) + r")/[\w./*-]*", line):
+            # The path has to be an operand of something that reads files, and
+            # not a word inside a for-list or a message: require the reader
+            # before it on the same line.
+            if not re.search(readers, line[:match.start()]):
+                continue
+            yield number, match.group(0)
+
+
 def check_workflow(path, want_artifact_job):
     """Return (problems, notes)."""
     problems, notes = [], []
@@ -205,12 +247,24 @@ def check_workflow(path, want_artifact_job):
             for need in needs or []:
                 if need not in jobs:
                     problems.append("%s: job %s needs unknown job %s" % (path, job, need))
-        for step in steps_of(doc):
-            run = step.get("run")
-            if isinstance(run, str):
-                err = bash_check(run, "%s: %s" % (path, step.get("name") or "unnamed step"))
+        for job, body in jobs.items():
+            for i, step in enumerate(body.get("steps") or []):
+                if not isinstance(step, dict):
+                    continue
+                run = step.get("run")
+                if not isinstance(run, str):
+                    continue
+                where = "%s: %s step %d" % (path, job, i)
+                err = bash_check(run, where)
                 if err:
                     problems.append(err)
+                for number, token in cwd_relative_paths(run):
+                    problems.append(
+                        "%s: run line %d uses the cwd-relative repo path %r after "
+                        "the step has cd'd away from the checkout, which matches "
+                        "nothing; anchor it at \"$GITHUB_WORKSPACE/%s\""
+                        % (where, number, token, token)
+                    )
         # YAML 1.1 resolves the bare key on: to True, so a lookup of "on"
         # alone reports "no triggers" on every valid file -- the mistake this
         # check was written to catch would be caught by it instead.  Look for

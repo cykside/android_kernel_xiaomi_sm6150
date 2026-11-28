@@ -1034,22 +1034,33 @@ jobs:
           # file that carries v3 sits behind CONFIG_PHY_QCOM_UFS_V3_SM4350 -- a
           # symbol named after the chipset that shipped with it, not after the PHY
           # -- so check the tables, never the label.
+          # Every path here is anchored at $GITHUB_WORKSPACE, not relative.
+          # This step runs with cwd = the temp installer directory (it has to,
+          # to zip it), and the first version of this loop used relative
+          # paths, so the grep found no drivers at all and the only way to
+          # notice was a red run: "no driver under drivers/phy/qualcomm
+          # mentions qcom,ufs-phy-qmp-v3" on a tree that builds exactly that
+          # driver.  out/surya/.config is the build output, likewise.
           for c in $(fdtget -t s dtb "$phy" compatible); do
-            files=$(grep -l ""$c"" drivers/phy/qualcomm/*.c || true)
+            files=$(grep -l ""$c"" "$GITHUB_WORKSPACE/drivers/phy/qualcomm/"*.c || true)
             if [ -z "$files" ]; then
               echo "::error::no driver under drivers/phy/qualcomm mentions $c"
               exit 1
             fi
             built=0
             for f in $files; do
-              sym=$(grep -F "$(basename "$f" .c).o" drivers/phy/qualcomm/Makefile |
+              sym=$(grep -F "$(basename "$f" .c).o" "$GITHUB_WORKSPACE/drivers/phy/qualcomm/Makefile" |
                     sed -n 's/^obj-\$(CONFIG_\([A-Z0-9_]*\)).*/\1/p' | head -1)
               [ -n "$sym" ] || continue
-              if grep -Fxq "CONFIG_${sym}=y" out/surya/.config; then
+              if grep -Fxq "CONFIG_${sym}=y" "$GITHUB_WORKSPACE/out/surya/.config"; then
                 built=1
                 echo "$c -> $(basename "$f") ($sym=y)"
                 hdr=$( { grep -o 'phy-qcom-ufs-qmp[a-z0-9.-]*\.h' "$f" || true; } | head -1 || true)
-                n=$(grep -c UFS_QCOM_PHY_CAL_ENTRY "drivers/phy/qualcomm/$hdr" || true)
+                if [ -z "$hdr" ]; then
+                  echo "::error::$f includes no qmp header, so its calibration-table size cannot be checked against stock's 88 entries"
+                  exit 1
+                fi
+                n=$(grep -c UFS_QCOM_PHY_CAL_ENTRY "$GITHUB_WORKSPACE/drivers/phy/qualcomm/$hdr" || true)
                 if [ "$n" != 88 ]; then
                   echo "::error::$f uses $hdr with $n calibration entries; stock's v3 table has 88, so this driver is not the PHY revision the board has (v4 has 177, v3-660 has 76)"
                   exit 1

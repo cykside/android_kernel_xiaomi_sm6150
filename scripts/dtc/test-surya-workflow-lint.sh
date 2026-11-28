@@ -201,4 +201,61 @@ sed 's/  push:/  pull_request:/' "$tmp/no-pr-trigger.yml" > "$tmp/pr-trigger.yml
 	exit 1
 }
 
+# A gate whose paths are relative to the checkout silently reads nothing once
+# the step has cd'd into the temporary installer directory.  This is the fault
+# that made a passing-on-the-tree PHY gate fail only in CI, with a message that
+# blamed the tree ("no driver under drivers/phy/qualcomm mentions ...").
+cat > "$tmp/cwd-relative.yml" <<'YML'
+name: Cwd sensitive
+on:
+  pull_request:
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assemble
+        run: |
+          work=$(mktemp -d)
+          cd "$work/installer"
+          for c in qcom,ufs-phy-qmp-v3; do
+            files=$(grep -l ""$c"" drivers/phy/qualcomm/*.c || true)
+            test -n "$files"
+            if grep -Fxq CONFIG_X=y out/surya/.config; then
+              echo built
+            fi
+          done
+YML
+if "$lint" "$tmp/cwd-relative.yml" > "$tmp/cwd.out" 2>&1; then
+	echo 'a cwd-relative repo path in a step that left the checkout was accepted' >&2
+	exit 1
+fi
+grep -qF "cwd-relative repo path 'drivers/phy/qualcomm/*.c'" "$tmp/cwd.out"
+grep -qF "cwd-relative repo path 'out/surya/.config'" "$tmp/cwd.out"
+
+# The same step anchored at $GITHUB_WORKSPACE must pass -- and a bare path in a
+# step that never cd's is legitimate, since the checkout is then the cwd.
+sed 's|drivers/phy/qualcomm|"$GITHUB_WORKSPACE/drivers/phy/qualcomm"|; s|out/surya/.config|"$GITHUB_WORKSPACE/out/surya/.config"|' \
+	"$tmp/cwd-relative.yml" > "$tmp/cwd-anchored.yml"
+"$lint" "$tmp/cwd-anchored.yml" > "$tmp/cwd2.out" 2>&1 || {
+	echo 'the anchored form was rejected:' >&2
+	cat "$tmp/cwd2.out" >&2
+	exit 1
+}
+cat > "$tmp/repo-cwd.yml" <<'YML'
+name: No cd
+on:
+  pull_request:
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - name: From the checkout
+        run: |
+          grep -l x drivers/phy/qualcomm/*.c
+YML
+"$lint" "$tmp/repo-cwd.yml" > /dev/null 2>&1 || {
+	echo 'a relative path in a step that stays in the checkout was rejected' >&2
+	exit 1
+}
+
 echo 'surya-workflow-lint self-test passed'
