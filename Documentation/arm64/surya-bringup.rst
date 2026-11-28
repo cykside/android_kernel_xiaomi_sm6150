@@ -2032,3 +2032,64 @@ that *does* leave a capture localises the death to PHY register access, which is
 the boundary past which the block must be powered, reset or clocked before it may
 be written -- and the capture then shows whether the host reached
 ``ufshcd_hba_enable()`` with a real errno, which is the thing to fix next.
+
+The flashable zip's installer was not the installer the gates checked
+----------------------------------------------------------------------
+
+The 2026-11-28 01:56 UTC ``/cache/recovery/log`` (submitted with the seventh
+pstore report) contains the install of ``Surya-6.1-TWRP-BOOT-TEST-RAMOOPS.zip``
+verbatim, and it settles two questions at once.
+
+The flash itself is clean: ``Updater process ended with RC=0``, ``Install took 13
+second(s)``.  The interesting part is the header diff, which is the only
+ground truth about what the kernel was told to run with::
+
+    CMDLINE (input)  ... earlycon=ramoops,0x9da00000,0x40000 ... reboot=warm
+                       panic=5 loglevel=8 rcupdate.rcu_expedited=0
+                       fw_devlink=permissive cpuidle.off=1
+    CMDLINE (repack) ... same, plus exactly one new token:
+                       rcupdate.rcu_expedited=0
+    absent from both:  clk_ignore_unused
+                       softlockup_panic=1
+
+``patch_cmdline`` appends a token only when it is missing, so "one new token"
+says the installer that ran knew only that one.  The reason is a divergence in
+this tree: ``tools/surya-anykernel/`` holds two scripts, ``anykernel.sh`` (the
+diagnostic, writes nothing) and ``boot-test.sh`` (the flashable one), and the
+RAMOOPS zip assembles ``boot-test.sh`` into the zip as ``anykernel.sh`` -- while
+every gate in this workflow checked the knobs against ``tools/surya-anykernel/
+anykernel.sh``, the file no boot ever ran.  ``clk_ignore_unused`` arrived there
+in fix #7 and never reached here.
+
+That matters more than the logging knob it also swallowed.  ``clk_ignore_unused``
+is what stops ``clk_disable_unused()`` at late_initcall from gating every
+bootloader-enabled clock that no 6.1 driver claims, and on this board
+``gcc_ufs_phy_ice_core_clk``, ``gcc_ufs_phy_unipro_core_clk`` and
+``gcc_aggre_ufs_phy_axi_clk`` are exactly that: enabled by the bootloaders to run
+UFS, owned by no consumer here, and the downstream 4.14 driver keeps them alive
+through ``qcom_cc_enable_critical_clocks()`` instead.  Whether the ``/chosen``
+copy of the argument rescued those three clocks in #7..#9 is not settled by any
+capture -- but a bring-up argument that depends on the bootloader merging
+``/chosen`` into the header cmdline is not an argument that was set, so it is now
+set where the kernel reads it.
+
+Three changes, then:
+
+* ``boot-test.sh`` patches ``clk_ignore_unused`` and ``softlockup_panic=1`` like
+  its sibling always did.
+* ``boot-test.sh`` refuses to flash without the first of them::
+
+      grep -Eq '^cmdline=.*clk_ignore_unused( |$)' "$SPLITIMG/header" ||
+        abort 'clk_ignore_unused missing from the repacked cmdline; ...'
+
+  which is the general fix for this class of mistake: the installer checks the
+  repacked header it is about to write, so a knob that did not make it into the
+  boot image stops the flash instead of costing a boot.
+* CI checks every knob against *both* files and then diffs their
+  ``patch_cmdline`` key sets, so the two installers cannot drift again.
+
+Verified by replaying the real function against the real input: sourcing
+``patch_cmdline`` from ``tools/ak3-core.sh`` at the pinned commit and feeding it
+the exact input cmdline above reproduces the logged ``rcupdate.rcu_expedited=0``
+duplication and now ends with ``clk_ignore_unused softlockup_panic=1``, with both
+guards passing.  ``sh -n`` is clean and the workflow YAML parses.

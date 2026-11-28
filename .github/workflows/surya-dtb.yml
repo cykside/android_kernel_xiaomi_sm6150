@@ -1090,17 +1090,28 @@ jobs:
           # from the boot image header, not from /chosen: without it the 6.1
           # clk_disable_unused() pass gates the AHB path the 4.14 driver keeps
           # alive through its critical-clk list.
-          if ! grep -q "patch_cmdline 'clk_ignore_unused'" "$GITHUB_WORKSPACE/tools/surya-anykernel/anykernel.sh"; then
-            echo '::error::the installer must put clk_ignore_unused on the stock cmdline'
+          # Both installer files must carry every knob, because the RAMOOPS zip
+          # ships boot-test.sh as its anykernel.sh (the cp further up this job)
+          # and only asserts the knobs against anykernel.sh -- so in the
+          # 2026-11-28 19:56 flash the repacked cmdline gained only
+          # rcupdate.rcu_expedited=0: clk_ignore_unused and softlockup_panic=1
+          # were patched by the file nobody flashed.  A gate on the diagnostic
+          # installer is not a gate on the boot.
+          for knob in 'clk_ignore_unused' 'softlockup_panic=' 'fw_devlink=' 'cpuidle.off=' 'panic=' 'loglevel=' 'earlycon='; do
+            for inst in tools/surya-anykernel/boot-test.sh tools/surya-anykernel/anykernel.sh; do
+              if ! grep -q "patch_cmdline '$knob" "$GITHUB_WORKSPACE/$inst"; then
+                echo "::error::$inst must patch_cmdline $knob; the boot header cmdline is what the kernel boots with"
+                exit 1
+              fi
+            done
+          done
+          if [ "$(grep -o "^patch_cmdline '[^']*'" "$GITHUB_WORKSPACE/tools/surya-anykernel/anykernel.sh" | sed "s/^patch_cmdline '//" | sort -u)" != "$(grep -o "^patch_cmdline '[^']*'" "$GITHUB_WORKSPACE/tools/surya-anykernel/boot-test.sh" | sed "s/^patch_cmdline '//" | sort -u)" ]; then
+            echo '::error::the two Surya installers patch different cmdline keys; the flashable zip uses boot-test.sh, so any knob missing there is a knob that is not set'
             exit 1
           fi
           # A soft lockup report that does not reboot is a report that lands in
           # the wrapped tail of the prz, or in no capture at all when the user has
           # to force a hard reset (empty /sys/fs/pstore).
-          if ! grep -q "patch_cmdline 'softlockup_panic='" "$GITHUB_WORKSPACE/tools/surya-anykernel/anykernel.sh"; then
-            echo '::error::the installer must panic on soft lockups so every boot leaves a capture'
-            exit 1
-          fi
           if ! grep -q 'panic("Surya bringup:' "$GITHUB_WORKSPACE/drivers/base/dd.c"; then
             echo '::error::the Surya bring-up watchdog must panic on its final round while the chain is unsettled'
             exit 1
@@ -1206,9 +1217,20 @@ jobs:
             echo '::error::Surya UFS must not inherit the SM6150 SMMU dependency'
             exit 1
           fi
+          # Stamp the exact kernel build into the zip and let the installer print
+          # it.  Seven rounds of this bring-up have argued about what was in the
+          # boot partition with no way to settle it, and the install log is already
+          # part of what comes back (/cache/recovery/log), so identity now costs
+          # nobody an extra step.
+          kernel_id=$(gzip -cd Image.gz 2>/dev/null | strings -a | grep -m1 -o 'Linux version 6\.1\.177-surya-g[0-9a-f]*' || true)
+          printf '%s\n' "${kernel_id:-Linux version unknown}" > SURYA-VERSION
           sha256sum Image.gz dtb dtbo.img > SURYA-SHA256SUMS
           sh -n anykernel.sh
-          zip -q -r "$RUNNER_TEMP/Surya-6.1-TWRP-BOOT-TEST-RAMOOPS.zip" META-INF tools LICENSE anykernel.sh Image.gz dtb dtbo.img SURYA-SHA256SUMS
+          if ! grep -q 'SURYA-VERSION' anykernel.sh; then
+            echo '::error::the flashable installer must ui_print the kernel build stamp, or a report cannot name its own build'
+            exit 1
+          fi
+          zip -q -r "$RUNNER_TEMP/Surya-6.1-TWRP-BOOT-TEST-RAMOOPS.zip" META-INF tools LICENSE anykernel.sh Image.gz dtb dtbo.img SURYA-SHA256SUMS SURYA-VERSION
           unzip -tq "$RUNNER_TEMP/Surya-6.1-TWRP-BOOT-TEST-RAMOOPS.zip"
       - uses: actions/upload-artifact@v4
         if: contains(github.event.pull_request.labels.*.name, 'surya-twrp-test')
