@@ -295,7 +295,8 @@ static bool qcom_icc_bcm_voter_exist(struct bcm_voter *voter)
  */
 void qcom_icc_bcm_voter_add(struct bcm_voter *voter, struct qcom_icc_bcm *bcm)
 {
-	if (!voter)
+	/* A failed Command DB lookup leaves the BCM lists uninitialized. */
+	if (!voter || !bcm->addr)
 		return;
 
 	if (!qcom_icc_bcm_voter_exist(voter))

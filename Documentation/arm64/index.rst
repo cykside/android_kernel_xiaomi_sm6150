@@ -22,6 +22,7 @@ ARM64 Architecture
     pointer-authentication
     silicon-errata
     sme
+    surya-bringup
     sve
     tagged-address-abi
     tagged-pointers

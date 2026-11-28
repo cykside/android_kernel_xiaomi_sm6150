@@ -4805,7 +4805,7 @@ EXPORT_SYMBOL_GPL(ufshcd_hba_stop);
 static int ufshcd_hba_execute_hce(struct ufs_hba *hba)
 {
 	int retry_outer = 3;
-	int retry_inner;
+	int retry_inner, ret;
 
 start:
 	if (ufshcd_is_hba_active(hba))
@@ -4815,7 +4815,9 @@ start:
 	/* UniPro link is disabled at this point */
 	ufshcd_set_link_off(hba);
 
-	ufshcd_vops_hce_enable_notify(hba, PRE_CHANGE);
+	ret = ufshcd_vops_hce_enable_notify(hba, PRE_CHANGE);
+	if (ret)
+		return ret;
 
 	/* start controller initialization sequence */
 	ufshcd_hba_start(hba);
@@ -4863,7 +4865,9 @@ int ufshcd_hba_enable(struct ufs_hba *hba)
 
 	if (hba->quirks & UFSHCI_QUIRK_BROKEN_HCE) {
 		ufshcd_set_link_off(hba);
-		ufshcd_vops_hce_enable_notify(hba, PRE_CHANGE);
+		ret = ufshcd_vops_hce_enable_notify(hba, PRE_CHANGE);
+		if (ret)
+			return ret;
 
 		/* enable UIC related interrupts */
 		ufshcd_enable_intr(hba, UFSHCD_UIC_MASK);

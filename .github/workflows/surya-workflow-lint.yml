@@ -1,0 +1,41 @@
+name: Surya workflow lint
+# Small on purpose, and it checks the *other* workflow files instead of holding
+# logic of its own: a gate written inside the file it guards cannot report the
+# one failure that matters.  Actions rejects a workflow file it cannot parse and
+# then produces no jobs, no annotations and no check output -- so the guard has
+# to live somewhere that stays parseable, and it has to trigger on push as well
+# as pull_request so the rejectable file can be reported on its own commit.
+on:
+  push:
+  pull_request:
+    branches:
+      - seventeen-6.1
+permissions:
+  contents: read
+concurrency:
+  group: surya-workflow-lint-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+jobs:
+  lint:
+    name: Lint the CI workflow files
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the one dependency, without failing on a mirror hiccup
+        run: python3 -c 'import yaml' 2>/dev/null || pip3 install --quiet pyyaml || true
+      - name: Run the linter's own self-test first
+        # A checker that silently passes everything is worse than none: the
+        # over-long-expression rejection that cost a build cycle is exactly the
+        # kind of thing only a negative case can prove is still being caught.
+        run: sh scripts/dtc/test-surya-workflow-lint.sh
+      - name: Lint every workflow file in the repository
+        run: python3 scripts/dtc/surya-workflow-lint.py .github/workflows/*.yml
+      - name: Echo what the runner will reject, for humans reading the log
+        run: |
+          python3 - <<'PY'
+          import glob
+          for path in sorted(glob.glob(".github/workflows/*.yml")):
+              text = open(path, encoding="utf-8", errors="replace").read()
+              print("%-42s %6d bytes" % (path, len(text)))
+          PY

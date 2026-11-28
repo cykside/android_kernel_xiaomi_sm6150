@@ -766,7 +766,8 @@ int gpiochip_add_data_with_key(struct gpio_chip *gc, void *data,
 	for (i = 0; i < gc->ngpio; i++) {
 		struct gpio_desc *desc = &gdev->descs[i];
 
-		if (gc->get_direction && gpiochip_line_is_valid(gc, i)) {
+		if (!gc->skip_initial_direction && gc->get_direction &&
+		    gpiochip_line_is_valid(gc, i)) {
 			assign_bit(FLAG_IS_OUT,
 				   &desc->flags, !gc->get_direction(gc, i));
 		} else {

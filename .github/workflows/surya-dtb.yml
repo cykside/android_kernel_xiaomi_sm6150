@@ -1,0 +1,1468 @@
+name: Surya DTB smoke test
+
+on:
+  pull_request:
+    branches: [seventeen-6.1]
+    types: [opened, synchronize, reopened, labeled]
+
+concurrency:
+  group: surya-bringup-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  surya-dtb:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flex bison bc libelf-dev libssl-dev device-tree-compiler python3-libfdt
+      - name: Set up Violet Android Clang r487747c
+        run: bash .github/scripts/setup-surya-clang.sh
+      - name: Test offline stock DT audit with synthetic inputs
+        run: scripts/dtc/test-surya-stock-audit.sh
+      - name: Test the pstore geometry gate offline
+        run: sh scripts/dtc/test-surya-ramoops-check.sh
+      - name: Configure Surya and verify the fragment
+        run: |
+          make O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 gki_defconfig vendor/surya.config
+          missing=0
+          while IFS= read -r setting; do
+            case "$setting" in CONFIG_*=*) ;; *) continue ;; esac
+            if ! grep -Fxq -- "$setting" out/surya/.config; then
+              symbol=${setting%%=*}
+              actual=$(grep -E "^${symbol}=|^# ${symbol} is not set$" out/surya/.config || true)
+              echo "::error file=arch/arm64/configs/vendor/surya.config::Expected $setting; resolved: ${actual:-absent}"
+              missing=1
+            fi
+          done < arch/arm64/configs/vendor/surya.config
+          # These suppliers are also selected indirectly by Kconfig.
+          for config in PM_GENERIC_DOMAINS_OF ARM_PSCI_CPUIDLE_DOMAIN QCOM_RPMH INTERCONNECT_QCOM_BCM_VOTER; do
+            if ! grep -Fxq "CONFIG_${config}=y" out/surya/.config; then
+              echo "::error::Required early RPMh supplier CONFIG_${config} did not resolve to y"
+              missing=1
+            fi
+          done
+          test "$missing" -eq 0
+      - name: Build and check the board DTB
+        run: |
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 vendor/qcom/surya-sm6150.dtb vendor/qcom/violet-sm6150.dtb \
+          vendor/qcom/surya-sm6150-v2-test.dtb
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+          test "$(fdtget -t s "$dtb" / compatible)" = 'xiaomi,surya qcom,sm6150'
+          test "$(fdtget -t u "$dtb" / qcom,msm-id)" = '365 0'
+          test "$(fdtget -t u "$dtb" / qcom,board-id)" = '34 0'
+          xbl=/reserved-memory/xbl_aop_mem@85e00000
+          fixed_cmd=/reserved-memory/memory@85f20000
+          test "$(fdtget -t x "$dtb" "$xbl" reg)" = '0 85e00000 0 120000'
+          test "$(fdtget -t x "$dtb" "$fixed_cmd" reg)" = '0 85f20000 0 20000'
+          test "$(fdtget -t s "$dtb" "$fixed_cmd" compatible)" = qcom,cmd-db
+          if fdtget "$dtb" /soc/command-db@c3f000c compatible >/dev/null 2>&1; then
+            echo 'Discovery must stay out of the primary Surya DTB during offline audit' >&2
+            exit 1
+          fi
+          # The board DTB and the base the flashable DTB is built from are both
+          # handed to scripts/dtc/surya-ramoops-check.py, which recomputes the
+          # prz layout from each and requires both to mirror the map the stock
+          # 4.14 recovery attaches to (its own dmesg says `ramoops: attached
+          # 0x400000@0x9d800000, ecc: 0/0` in every capture).  Two files, not
+          # one: the ramoops node is a derived layout -- ramoops_probe() lays the
+          # dmesg przs out first -- and the second file is the one a device
+          # actually boots, assembled from the offline audit layers that can
+          # override this node.  One such override (surya-sm6150-v2-test.dts:38)
+          # is why a `no-map` this node no longer carries still reached all nine
+          # captures, so a single-file check cannot see a divergence at all.
+          pstore=/reserved-memory/ramoops@9d800000
+          test -n "$(fdtget -t x "$dtb" "$pstore" reg)"
+          v2=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-v2-test.dtb
+          test -s "$v2" || { echo "::error::$v2 was not built, so the shipped DTB went unchecked"; exit 1; }
+          python3 scripts/dtc/surya-ramoops-check.py "$dtb" "$v2"
+          for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000 \
+                      /soc/ssusb@a600000 /soc/hsusb@a800000; do
+            test "$(fdtget -t s "$dtb" "$node" status)" = disabled
+          done
+          for property in reset-gpios nvmem-cells nvmem-cell-names boot_device_type; do
+            if fdtget "$dtb" /soc/ufshc@1d84000 "$property" >/dev/null 2>&1; then
+              echo "Surya UFS must not inherit SM6150 $property" >&2
+              exit 1
+            fi
+          done
+          pdphy=/soc/qcom,spmi@c440000/pmic@0/usb-pdphy@1700
+          test "$(fdtget -t x "$dtb" "$pdphy" reg)" = '1700'
+          test "$(fdtget -t s "$dtb" "$pdphy" status)" = disabled
+          pmic=${pdphy%/*}
+          test "$(fdtget -t s "$dtb" "$pmic/charger" status)" = disabled
+          test "$(fdtget -t s "$dtb" "$pmic/charger" compatible)" = 'qcom,pm6150-smb5'
+          test "$(fdtget -t s "$dtb" "$pmic/adc@3100" status)" = disabled
+          test "$(fdtget -t s "$dtb" "$pmic/charger" io-channel-names)" = \
+            'usb_in_voltage usb_in_current chg_temp die_temp conn_temp sbux_res vph_voltage resistance_id voltage_now temp capacity voltage_ocv voltage_avg debug_battery real_capacity cc_soc current_now voltage_max charge_full charge_counter cycle_count charge_full_design time_to_full_now'
+          conn_adc=${pmic%/*}/pmic@4/adc@3100
+          test "$(fdtget -t s "$dtb" "$conn_adc" status)" = disabled
+          test "$(fdtget -t x "$dtb" "$conn_adc/channel@4d" reg)" = 4d
+          for table in thermal-mitigation thermal-mitigation-icl thermal-mitigation-dcp \
+                       thermal-mitigation-qc2 thermal-fcc-qc3-normal thermal-mitigation-pd-base; do
+            values=$(fdtget -t u "$dtb" "$pmic/charger" "qcom,$table")
+            awk 'NF != 16 { exit 1 } { for (i = 2; i <= NF; i++) if ($i > $(i-1)) exit 1 }' <<< "$values"
+          done
+          gauge=$pmic/fuel-gauge
+          test "$(fdtget -t s "$dtb" "$gauge" status)" = disabled
+          test "$(fdtget -t s "$dtb" "$gauge" io-channel-names)" = 'batt-therm batt-id input_current_limited recharge_soc force_recharge charge_done'
+          test "$(fdtget -t x "$dtb" "$gauge/qcom,qgauge@4800" reg)" = 4800
+          test "$(fdtget -t x "$dtb" "$gauge/qcom,qg-sdam@b600" reg)" = b600
+          charger_phandle=$(fdtget -t x "$dtb" "$pmic/charger" phandle)
+          gauge_phandle=$(fdtget -t x "$dtb" "$gauge" phandle)
+          gauge_inputs=$(fdtget -t x "$dtb" "$gauge" io-channels)
+          charger_inputs=$(fdtget -t x "$dtb" "$pmic/charger" io-channels)
+          awk -v provider="$charger_phandle" '
+            NF != 12 { exit 1 }
+            { for (i = 5; i <= NF; i += 2) if ($i != provider) exit 1 }
+          ' <<< "$gauge_inputs"
+          awk -v provider="$gauge_phandle" '
+            NF != 46 { exit 1 }
+            { for (i = 15; i <= NF; i += 2) if ($i != provider) exit 1 }
+          ' <<< "$charger_inputs"
+      - name: Compile the staged power, USB, UFS and Command DB drivers
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/surya-driver-build.log"
+          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            drivers/soc/qcom/cmd-db.o \
+            drivers/power/supply/qcom/built-in.a \
+            drivers/usb/pd/built-in.a \
+            drivers/usb/dwc3/dwc3-msm-core.o \
+            drivers/iio/adc/qcom-spmi-adc5.o \
+            drivers/ufs/host/ufs-qcom.o \
+            drivers/phy/qualcomm/phy-qcom-ufs-qmp-v4.o \
+            drivers/regulator/qpnp-lcdb-regulator.o \
+            drivers/video/backlight/qcom-spmi-wled.o \
+            drivers/gpio/gpiolib.o \
+            drivers/pinctrl/qcom/pinctrl-msm.o \
+            drivers/pinctrl/qcom/pinctrl-sdmmagpie.o 2>&1 | tee "$log" || {
+              awk '/error:|[Ee]rror [0-9]|No rule to make target/ {print "::error::" $0}' "$log"
+              exit 1
+            }
+      - name: Verify staged NT36672C panel data
+        run: |
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+          test "$(fdtget -t s "$dtb" /soc/qcom,mdss_mdp@ae00000 status)" = disabled
+          test "$(fdtget -t s "$dtb" /soc/qcom,dsi-display-primary status)" = disabled
+          pmic_gpio=/soc/qcom,spmi@c440000/pmic@4/pinctrl@c000
+          test "$(fdtget -t s "$dtb" "$pmic_gpio" status)" = disabled
+          pmic_gpio_phandle=$(fdtget -t u "$dtb" "$pmic_gpio" phandle)
+          for vendor in huaxing tianma; do
+            panel=/soc/qcom,mdss_mdp@ae00000/qcom,mdss_dsi_nt36672c_${vendor}_fhd_video
+            timing=$panel/qcom,mdss-dsi-display-timings/timing@0
+            test "$(fdtget -t s "$dtb" "$panel" status)" = disabled
+            test "$(fdtget -t u "$dtb" "$panel" qcom,platform-reset-gpio)" = "$pmic_gpio_phandle 9 0"
+            te=$(fdtget -t u "$dtb" "$panel" qcom,platform-te-gpio)
+            test "${te#* }" = '10 0'
+            test "$(fdtget -t u "$dtb" "$timing" qcom,mdss-dsi-panel-width)" = 1080
+            test "$(fdtget -t u "$dtb" "$timing" qcom,mdss-dsi-panel-height)" = 2400
+            test "$(fdtget -t u "$dtb" "$timing" qcom,mdss-dsi-panel-framerate)" = 120
+            test -n "$(fdtget -t bx "$dtb" "$timing" qcom,mdss-dsi-on-command)"
+          done
+          display_pmic=/soc/qcom,spmi@c440000/pmic@5
+          test "$(fdtget -t s "$dtb" "$display_pmic/qcom,wled@d800" status)" = disabled
+          test "$(fdtget -t u "$dtb" "$display_pmic/qcom,wled@d800" qcom,string-cfg)" = 7
+          test "$(fdtget -t s "$dtb" "$display_pmic/qcom,lcdb@ec00" status)" = disabled
+          for rail in ldo ncp bst; do
+            test "$(fdtget -t s "$dtb" "$display_pmic/qcom,lcdb@ec00/$rail" regulator-name)" = "lcdb_$rail"
+          done
+          supplies=/soc/qcom,mdss_mdp@ae00000/panel-supply-entries
+          supply_phandle=$(fdtget -t u "$dtb" "$supplies" phandle)
+          test "$(fdtget -t u "$dtb" "$supplies/qcom,panel-supply-entry@2" qcom,supply-post-on-sleep)" = 20
+          for vendor in huaxing tianma; do
+            panel=/soc/qcom,mdss_mdp@ae00000/qcom,mdss_dsi_nt36672c_${vendor}_fhd_video
+            test "$(fdtget -t u "$dtb" "$panel" qcom,panel-supply-entries)" = "$supply_phandle"
+            test "$(fdtget -t u "$dtb" "$panel" qcom,dsi-ctrl-num)" = 0
+            test "$(fdtget -t u "$dtb" "$panel" qcom,dsi-phy-num)" = 0
+          done
+          for vendor in huaxing tianma; do
+            panel=/soc/qcom,mdss_mdp@ae00000/qcom,mdss_dsi_nt36672c_${vendor}_fhd_video
+            timing=$panel/qcom,mdss-dsi-display-timings/timing@0
+            test "$(fdtget -t u "$dtb" "$timing" qcom,display-topology)" = '1 1 1'
+            test "$(fdtget -t s "$dtb" "$timing" qcom,compression-mode)" = dsc
+            test "$(fdtget -t x "$dtb" "$panel" qcom,mdss-dsi-t-clk-pre)" = 26
+            test "$(fdtget -t x "$dtb" "$panel" qcom,mdss-dsi-t-clk-post)" = 4
+          done
+      - name: Compile the SM6150 display stack
+        run: |
+          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            techpack/display/built-in.a drivers/clk/qcom/dispcc-sm6150.o
+      - name: Verify staged touch bus and compile GENI SPI
+        run: |
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+          bus=/soc/qcom,qupv3_0_geni_se@8c0000/spi@880000
+          touch=$bus/touchscreen@0
+          test "$(fdtget -t s "$dtb" "$bus" status)" = disabled
+          test "$(fdtget -t s "$dtb" "$touch" status)" = disabled
+          test "$(fdtget -t s "$dtb" "$touch" compatible)" = 'novatek,NVT-ts-spi'
+          test "$(fdtget -t u "$dtb" "$touch" spi-max-frequency)" = 19200000
+          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 drivers/spi/spi-msm-geni.o
+      - name: Verify staged haptic wiring
+        run: |
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+          bus=/soc/qcom,qupv3_0_geni_se@8c0000/i2c@884000
+          haptic=$bus/haptic@5a
+          test "$(fdtget -t s "$dtb" "$bus" status)" = disabled
+          test "$(fdtget -t s "$dtb" "$haptic" status)" = disabled
+          test "$(fdtget -t x "$dtb" "$haptic" reg)" = 5a
+          test "$(fdtget -t s "$dtb" "$haptic" compatible)" = 'awinic,aw8624_haptic ti,drv2624'
+          reset=$(fdtget -t u "$dtb" "$haptic" reset-gpio)
+          irq=$(fdtget -t u "$dtb" "$haptic" irq-gpio)
+          test "${reset#* }" = '63 0'
+          test "${irq#* }" = '26 0'
+
+      - name: Verify staged NFC and compile GENI I2C
+        run: |
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+          bus=/soc/qcom,qupv3_0_geni_se@8c0000/i2c@888000
+          nfc=$bus/nfc@28
+          test "$(fdtget -t s "$dtb" "$bus" status)" = disabled
+          test "$(fdtget -t s "$dtb" "$nfc" status)" = disabled
+          test "$(fdtget -t s "$dtb" "$nfc" compatible)" = 'qcom,nq-nci'
+          test "$(fdtget -t x "$dtb" "$nfc" reg)" = 28
+          test "$(fdtget -t u "$dtb" "$nfc" interrupts)" = '37 0'
+          ese=$(fdtget -t u "$dtb" "$nfc" qcom,nq-esepwr)
+          test "${ese#* }" = '22 0'
+          make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 drivers/i2c/busses/i2c-msm-geni.o
+
+      - name: Verify staged SDMMagpie pinctrl states
+        run: |
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+          tlmm=/soc/pinctrl@03000000
+          test "$(fdtget -t s "$dtb" "$tlmm" compatible)" = 'qcom,sm6150-pinctrl'
+          test "$(fdtget -t s "$dtb" "$tlmm/surya-te-state" pins)" = gpio10
+          test "$(fdtget -t s "$dtb" "$tlmm/surya-te-state" function)" = mdp_vsync
+          test "$(fdtget -t s "$dtb" "$tlmm/surya-touch-spi-active-state" pins)" = 'gpio49 gpio50 gpio51 gpio52'
+          test "$(fdtget -t s "$dtb" "$tlmm/surya-touch-spi-active-state" function)" = qup00
+          test "$(fdtget -t s "$dtb" "$tlmm/surya-nfc-i2c-active-state" pins)" = 'gpio34 gpio35'
+          test "$(fdtget -t s "$dtb" "$tlmm/surya-nfc-i2c-active-state" function)" = qup02
+
+      - name: Compile the offline SDMMagpie TLMM audit DTB
+        run: |
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 vendor/qcom/surya-sm6150-tlmm-audit.dtb
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-tlmm-audit.dtb
+          tlmm=/soc/pinctrl@3400000
+          test "$(fdtget -t s "$dtb" "$tlmm" compatible)" = 'qcom,sdmmagpie-pinctrl'
+          test "$(fdtget -t x "$dtb" "$tlmm" reg)" = '3400000 dc2000 17c000f0 60'
+          test "$(fdtget -t u "$dtb" "$tlmm" interrupts)" = '0 208 4'
+          test "$(fdtget -t s "$dtb" "$tlmm" status)" = disabled
+          test "$(fdtget -t s "$dtb" /soc/ufshc@1d84000 status)" = disabled
+          test "$(fdtget -t s "$dtb" /soc/ufshc@1d84000 pinctrl-names)" = 'dev-reset-assert dev-reset-deassert'
+          cmd=/soc/command-db@c3f000c
+          xbl=/reserved-memory/xbl_aop_mem@85e00000
+          test "$(fdtget -t s "$dtb" "$cmd" status)" = disabled
+          test "$(fdtget -t x "$dtb" "$cmd" reg)" = 'c3f000c 8'
+          test "$(fdtget -t x "$dtb" "$xbl" reg)" = '0 85e00000 0 1ff000'
+          test "$(fdtget -t x "$dtb" "$cmd" memory-region)" = "$(fdtget -t x "$dtb" "$xbl" phandle)"
+          test "$(fdtget -t s "$dtb" "$cmd" compatible)" = qcom,sdmmagpie-cmd-db
+          fdtget "$dtb" "$xbl" no-map >/dev/null
+          if fdtget "$dtb" /reserved-memory/memory@85f20000 reg >/dev/null 2>&1; then
+            echo 'Offline XBL/AOP and fixed Command DB ranges must not overlap' >&2
+            exit 1
+          fi
+          reserved=/reserved-memory
+          test "$(fdtget -t x "$dtb" "$reserved/rproc_cdsp_region" reg)" = '0 93900000 0 1e00000'
+          test "$(fdtget -t x "$dtb" "$reserved/rproc_adsp_region" reg)" = '0 95700000 0 1e00000'
+          test "$(fdtget -t x "$dtb" "$reserved/wlan_msa_region@97500000" reg)" = '0 97500000 0 180000'
+          test "$(fdtget -t x "$dtb" "$reserved/npu_region@97680000" reg)" = '0 97680000 0 80000'
+          test "$(fdtget -t s "$dtb" /soc/remoteproc-adsp@62400000 status)" = disabled
+          test "$(fdtget -t s "$dtb" /soc/remoteproc-cdsp@0x8300000 status)" = disabled
+          test "$(fdtget -t x "$dtb" "$reserved/splash_region" reg)" = '0 9c000000 0 1700000'
+          test "$(fdtget -t x "$dtb" "$reserved/dfps_data_region@9d700000" reg)" = '0 9d700000 0 100000'
+          # The audit overlay includes surya-sm6150.dts, so it must carry
+          # the board DTB's ramoops node unchanged -- including whatever
+          # geometry the deriving step enforces.  Compare, never restate:
+          # the literal 0x400000 that used to sit here was stale for four
+          # builds without ever failing anything, because only this copy of
+          # the tree had been updated.
+          board_dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+          test "$(fdtget -t x "$dtb" "$reserved/ramoops@9d800000" reg)" = \
+            "$(fdtget -t x "$board_dtb" "$reserved/ramoops@9d800000" reg)"
+          for old in wlan_msa_region@93900000 dfps_data_region@9cf00000 disp_rdump_region@9c000000; do
+            if fdtget "$dtb" "$reserved/$old" reg >/dev/null 2>&1; then
+              echo "Offline layout must not retain $old" >&2
+              exit 1
+            fi
+          done
+          ufs=/soc/ufshc@1d84000
+          for index in 0 1; do
+            if [ "$index" = 0 ]; then
+              state="$tlmm/ufs_dev_reset_assert"
+              level=output-low
+            else
+              state="$tlmm/ufs_dev_reset_deassert"
+              level=output-high
+            fi
+            test "$(fdtget -t x "$dtb" "$ufs" "pinctrl-$index")" = "$(fdtget -t x "$dtb" "$state" phandle)"
+            test "$(fdtget -t s "$dtb" "$state/config" pins)" = ufs_reset
+            fdtget "$dtb" "$state/config" "$level" >/dev/null
+          done
+          uart=/soc/qcom,qupv3_0_geni_se@8c0000/qcom,qup_uart@0x880000
+          test "$(fdtget -t s "$dtb" "$uart" status)" = disabled
+          /usr/bin/python3 scripts/dtc/surya-tlmm-users.py "$dtb" "$tlmm" > "$RUNNER_TEMP/surya-tlmm-users.tsv"
+          cat "$RUNNER_TEMP/surya-tlmm-users.tsv"
+          active=$(awk -F '\t' '$1 == "available" && !seen[$2]++ {print $2}' "$RUNNER_TEMP/surya-tlmm-users.tsv")
+          count=$(awk 'NF {n++} END {print n+0}' <<< "$active")
+          printf '::notice title=Surya TLMM consumers::%s enabled nodes reference offline TLMM\n' "$count"
+          awk 'NF && n++ < 8 {gsub(/%/, "%25"); printf "::notice title=Surya TLMM review::%s\n", $0}' <<< "$active"
+          {
+            printf '### Enabled consumers of offline SDMMagpie TLMM (%s nodes)\n\n' "$count"
+            printf '\x60\x60\x60text\n%s\n\x60\x60\x60\n' "$active"
+          } >> "$GITHUB_STEP_SUMMARY"
+          grep -Fq $'disabled\t'"$uart"$'\tpinctrl-0\t' "$RUNNER_TEMP/surya-tlmm-users.tsv"
+
+      - name: Test mixed interrupt providers in the TLMM inventory
+        run: PYTHON=/usr/bin/python3 sh scripts/dtc/test-surya-tlmm-users.sh
+
+      - name: Check the Command DB integration fixture (not for flashing)
+        run: |
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 vendor/qcom/surya-sm6150-cmd-db-test.dtb
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-cmd-db-test.dtb
+          test "$(fdtget -t s "$dtb" /soc/command-db@c3f000c status)" = okay
+          tlmm=/soc/pinctrl@3400000
+          test "$(fdtget -t s "$dtb" "$tlmm" status)" = okay
+          /usr/bin/python3 scripts/dtc/surya-tlmm-users.py "$dtb" "$tlmm" > "$RUNNER_TEMP/surya-integration-tlmm.tsv"
+          if grep -q '^available[[:space:]]' "$RUNNER_TEMP/surya-integration-tlmm.tsv"; then
+            cat "$RUNNER_TEMP/surya-integration-tlmm.tsv"
+            echo 'Integration fixture must not activate unvalidated TLMM consumers' >&2
+            exit 1
+          fi
+          for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000; do
+            test "$(fdtget -t s "$dtb" "$node" status)" = disabled
+          done
+          /usr/bin/python3 scripts/dtc/surya-ufs-providers.py "$dtb" > "$RUNNER_TEMP/surya-integration-ufs.txt"
+          cat "$RUNNER_TEMP/surya-integration-ufs.txt"
+          for phy in /soc/qusb@88e2000 /soc/qusb@88e3000 /soc/ssphy@88e6000; do
+            test "$(fdtget -t s "$dtb" "$phy" status)" = disabled
+          done
+          shared=$(grep '^  available:' "$RUNNER_TEMP/surya-integration-ufs.txt" || true)
+          count=$(awk 'NF {n++} END {print n+0}' <<< "$shared")
+          if awk 'NF && $3 != "proxy-supply" {found=1} END {exit !found}' <<< "$shared"; then
+            printf '%s\n' "$shared"
+            echo 'Unexpected available consumer of an offline UFS supply' >&2
+            exit 1
+          fi
+          preview=$(awk 'NF && n++ < 6 {sub(/^  available: /, ""); printf "%s; ", $0}' <<< "$shared")
+          printf '::notice title=Surya shared UFS supplies::%s available supply references (first six): %s\n' "$count" "${preview//%/%25}"
+          {
+            printf '### Available shared UFS supply references (%s)\n\n' "$count"
+            printf '\x60\x60\x60text\n%s\n\x60\x60\x60\n' "$shared"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Neither UFS node may hold a regulator phandle: the RPMh VRM LDOs
+          # are registered as class devices, so their child nodes never become
+          # the supplier device fw_devlink waits on and both UFS nodes were
+          # parked "enabled; unbound" behind them.
+          for ref in '  vdd-hba-supply: absent' '  vcc-supply: absent' \
+                     '  vccq2-supply: absent' '  qcom,vddp-ref-clk-supply: absent' \
+                     '  vdda-phy-supply: absent' '  vdda-pll-supply: absent'; do
+            if ! grep -Fqx "$ref" "$RUNNER_TEMP/surya-integration-ufs.txt"; then
+              printf '::error::Surya UFS still references a RPMh regulator (%s)\n' "$ref"
+              exit 1
+            fi
+          done
+          # The audit fixture keeps the rail descriptions for whoever binds
+          # them later, so verify the overrides where they now live.
+          for rail in 'rpmh-regulator-ldoa19/regulator-pm6150-l19 2944000' \
+                      'rpmh-regulator-ldoa12/regulator-pm6150-l12 1696000' \
+                      'rpmh-regulator-ldoa4/regulator-pm6150-l4 824000' \
+                      'rpmh-regulator-ldoc3/regulator-pm6150l-l3 1144000'; do
+            read -r node voltage <<< "$rail"
+            test "$(fdtget -t u "$dtb" "/soc/rsc@18200000/drv@2/$node" qcom,init-voltage)" = "$voltage"
+          done
+
+      - name: Check the UFS integration fixture (not for flashing)
+        run: |
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 vendor/qcom/surya-sm6150-ufs-test.dtb
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-ufs-test.dtb
+          host=/soc/ufshc@1d84000
+          phy=/soc/ufsphy_mem@1d87000
+          test "$(fdtget -t s "$dtb" "$host" status)" = okay
+          test "$(fdtget -t s "$dtb" "$phy" status)" = okay
+          test "$(fdtget -t x "$dtb" "$host" reg)" = '1d84000 3000 1d90000 8000'
+          test "$(fdtget -t x "$dtb" "$phy" reg)" = '1d87000 e00'
+          test "$(fdtget -t u "$dtb" "$host" interrupts)" = '0 265 4'
+          for node in "$host" "$phy"; do
+            test "$(fdtget -t u "$dtb" "$node" lanes-per-direction)" = 1
+          done
+          test "$(fdtget -t x "$dtb" "$host" phys)" = "$(fdtget -t x "$dtb" "$phy" phandle)"
+          test "$(fdtget -t x "$dtb" "$phy" resets)" = "$(fdtget -t x "$dtb" "$host" phandle) 0"
+          test "$(fdtget -t s "$dtb" "$host" pinctrl-names)" = 'dev-reset-assert dev-reset-deassert'
+          /usr/bin/python3 scripts/dtc/surya-ufs-providers.py "$dtb" > "$RUNNER_TEMP/surya-ufs-test.txt"
+          awk -v host="$host" -v phy="$phy" '
+            $1 == "available:" && $3 != "proxy-supply" {
+              if ($2 == host) h++;
+              else if ($2 == phy) p++;
+              else {print; unexpected++}
+            }
+            # No UFS node may reference a regulator at all: the raw-offset
+            # vendor GDSC regulator must not probe (SError) and the RPMh VRM
+            # LDOs are registered as class devices, so their child nodes never
+            # become a supplier fw_devlink can wait on -- the host and PHY were
+            # parked "enabled; unbound" with an empty deferred list that way.
+            END {exit (unexpected || h || p)}
+          ' "$RUNNER_TEMP/surya-ufs-test.txt"
+
+      - name: Build the minimal-symbol Surya overlay base (offline only)
+        run: |
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 vendor/qcom/surya-sm6150-v2-test.dtb
+          dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-v2-test.dtb
+          test "$(fdtget -p "$dtb" /__symbols__)" = soc
+          test "$(fdtget -t s "$dtb" /__symbols__ soc)" = /soc
+          test "$(fdtget -t x "$dtb" / xiaomi,surya-overlay-target)" = "$(fdtget -t x "$dtb" /soc phandle)"
+
+      - name: Test a native Surya overlay offline (no partition image)
+        run: |
+          work=$(mktemp -d)
+          trap 'rm -rf -- "$work"' EXIT
+          base=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-v2-test.dtb
+          dtc -@ -I dts -O dtb -o "$work/ufs.dtbo" \
+            arch/arm64/boot/dts/vendor/qcom/surya-sm6150-overlay-test.dts
+          test "$(fdtget -t u "$work/ufs.dtbo" / qcom,msm-id)" = '365 0'
+          test "$(fdtget -t u "$work/ufs.dtbo" / qcom,board-id)" = '34 0'
+          for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000; do
+            test "$(fdtget -t s "$base" "$node" status)" = disabled
+          done
+          fdtoverlay -i "$base" -o "$work/merged.dtb" "$work/ufs.dtbo"
+          test "$(fdtget -p "$work/ufs.dtbo" /__fixups__)" = soc
+          for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000 /soc/pinctrl@3400000; do
+            test "$(fdtget -t s "$work/merged.dtb" "$node" status)" = okay
+          done
+          test "$(fdtget -t x "$work/merged.dtb" /soc/ufshc@1d84000 phys)" = "$(fdtget -t x "$work/merged.dtb" /soc/ufsphy_mem@1d87000 phandle)"
+          test "$(fdtget -t s "$work/merged.dtb" /soc/ufshc@1d84000 pinctrl-names)" = 'dev-reset-assert dev-reset-deassert'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: surya-dtb-for-audit
+          path: |
+            out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+            out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-tlmm-audit.dtb
+            out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-ufs-test.dtb
+            out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150-v2-test.dtb
+          if-no-files-found: error
+          retention-days: 3
+
+  surya-stock-dt-audit:
+    if: contains(github.event.pull_request.labels.*.name, 'surya-full-ci') || contains(github.event.pull_request.labels.*.name, 'surya-stock-ci')
+    needs: surya-dtb
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: surya-dtb-for-audit
+          path: out/surya-dtb-for-audit
+      - name: Install offline device tree tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y device-tree-compiler python3-libfdt
+      - name: Test offline overlay success and rejection
+        run: sh scripts/dtc/test-surya-overlay-check.sh
+      - name: Test UFS provider resolution
+        run: PYTHON=/usr/bin/python3 sh scripts/dtc/test-surya-ufs-providers.sh
+      - name: Compare against the pinned MIUI 14.0.1 stock dump
+        run: |
+          dump=https://gitlab.com/Android-Dumps/poco/surya/-/raw/47617823f73a3288ee5d42c611e0e22a339512ab
+          work=$(mktemp -d)
+          trap 'rm -rf -- "$work"' EXIT
+          curl --fail --show-error --silent --location --retry 2 --max-time 60 \
+            "$dump/bootimg/12_dtbdump_Qualcomm_Technologies,_Inc._SDMMAGPIE_SoC.dtb" \
+            -o "$work/base.dtb"
+          curl --fail --show-error --silent --location --retry 2 --max-time 60 \
+            "$dump/dtbodts/16_dtbdump_qcom,sdmmagpie-idp.dts" \
+            -o "$work/idp.dts"
+          scripts/dtc/surya-stock-audit.sh "$work/base.dtb" "$work/idp.dts" "$work/report"
+          candidate=out/surya-dtb-for-audit/surya-sm6150-ufs-test.dtb
+          dtc -I dts -O dtb -o "$work/idp.dtbo" "$work/idp.dts"
+          fdtget -p "$work/idp.dtbo" /__fixups__ | LC_ALL=C sort -u > "$work/fixups.txt"
+          fdtget -p "$candidate" /__symbols__ | LC_ALL=C sort -u > "$work/symbols.txt"
+          test -s "$work/symbols.txt"
+          LC_ALL=C comm -23 "$work/fixups.txt" "$work/symbols.txt" > "$work/missing-fixups.txt"
+          if sh scripts/dtc/surya-overlay-check.sh "$candidate" "$work/idp.dtbo" "$work/base.dtb" > "$work/apply.txt" 2>&1; then
+            overlay_result=applied
+          else
+            overlay_result=rejected
+          fi
+          missing=$(wc -l < "$work/missing-fixups.txt")
+          refs=$(wc -l < "$work/fixups.txt")
+          candidate_bytes=$(wc -c < "$candidate")
+          stock_bytes=$(wc -c < "$work/base.dtb")
+          printf '::notice title=Surya overlay baseline::MIUI 14.0.1 overlay %s; missing fixup symbols: %s/%s; base sizes: stock=%s, fixture=%s bytes\n' "$overlay_result" "$missing" "$refs" "$stock_bytes" "$candidate_bytes"
+          {
+            printf '### Stock overlay against the compile-only UFS DTB: %s\n\n' "$overlay_result"
+            printf '\x60\x60\x60text\nMissing fixup symbols (%s):\n' "$missing"
+            cat "$work/apply.txt"
+            printf '\x60\x60\x60\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          /usr/bin/python3 scripts/dtc/surya-tlmm-users.py \
+            "$work/report/stock-surya-merged.dtb" /soc/pinctrl@3400000 > "$work/tlmm-users.tsv"
+          /usr/bin/python3 scripts/dtc/surya-reserved-memory-diff.py \
+            "$work/report/stock-surya-merged.dtb" \
+            out/surya-dtb-for-audit/surya-sm6150.dtb > "$work/reserved-memory-diff.txt"
+          /usr/bin/python3 scripts/dtc/surya-reserved-memory-diff.py \
+            "$work/report/stock-surya-merged.dtb" \
+            out/surya-dtb-for-audit/surya-sm6150-tlmm-audit.dtb > "$work/offline-memory-diff.txt"
+          primary_count=$(grep -c '^partial overlap:' "$work/reserved-memory-diff.txt" || true)
+          offline_count=$(grep -c '^partial overlap:' "$work/offline-memory-diff.txt" || true)
+          printf '::notice title=Surya memory layout::Partial overlaps against stock: primary=%s, offline=%s\n' "$primary_count" "$offline_count"
+          {
+            for tree in "$work/report/stock-surya-merged.dtb" out/surya-dtb-for-audit/surya-sm6150.dtb; do
+              printf '\n%s\n' "$(basename "$tree")"
+              for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000; do
+                printf '%s\n' "$node"
+                for property in reg interrupts lanes-per-direction boot_device_type reset-gpios; do
+                  value=$(fdtget -t x "$tree" "$node" "$property" 2>/dev/null || echo absent)
+                  printf '  %s: %s\n' "$property" "$value"
+                done
+                for property in compatible status pinctrl-names reset-names nvmem-cell-names; do
+                  value=$(fdtget -t s "$tree" "$node" "$property" 2>/dev/null || echo absent)
+                  printf '  %s: %s\n' "$property" "$value"
+                done
+              done
+            done
+          } > "$work/ufs-comparison.txt"
+          /usr/bin/python3 scripts/dtc/surya-ufs-providers.py \
+            "$work/report/stock-surya-merged.dtb" \
+            out/surya-dtb-for-audit/surya-sm6150.dtb >> "$work/ufs-comparison.txt"
+          # Emit two compact notices before the reserved-memory notices.
+          # The full comparison stays in the summary and artifact.
+          for tree in stock-surya-merged.dtb surya-sm6150.dtb; do
+            providers=$(awk -v tree="$tree" '
+              /resolved UFS providers/ {show = index($0, tree ":") == 1}
+              /UFS supply consumers/ {show = 0}
+              show && NF {sub(/^ +/, ""); printf "%s; ", $0}
+            ' "$work/ufs-comparison.txt")
+            printf '::notice title=Surya UFS providers::%s\n' "${providers//%/%25}"
+          done
+          if [ "$missing" -gt 0 ]; then
+            for offset in 1 21 41 61; do
+              labels=$(sed -n "${offset},$((offset + 19))p" "$work/missing-fixups.txt" | paste -sd, -)
+              if [ -n "$labels" ]; then
+                printf '::notice title=Surya overlay missing symbols::%s\n' "${labels//%/%25}"
+              fi
+            done
+          fi
+          grep '^partial overlap:' "$work/offline-memory-diff.txt" | head -n 2 | while IFS= read -r line; do
+            printf '::notice title=Surya offline memory::%s\n' "${line//%/%25}"
+          done || true
+          {
+            echo '### MIUI 14.0.1 stock device tree audit (offline)'
+            printf '\n```text\n'
+            cat "$work/report/stock-surya-summary.txt"
+            printf '\nReserved memory comparison against Linux 6.1:\n'
+            cat "$work/reserved-memory-diff.txt"
+            printf '\nReserved memory comparison against the offline DTB (not bootable):\n'
+            cat "$work/offline-memory-diff.txt"
+            printf '\nUFS controller and PHY comparison:\n'
+            cat "$work/ufs-comparison.txt"
+            printf '```\n\n<details><summary>TLMM consumers</summary>\n\n```text\n'
+            cat "$work/tlmm-users.tsv"
+            printf '```\n\n</details>\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cp "$work/ufs-comparison.txt" "$RUNNER_TEMP/surya-ufs-comparison.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: surya-ufs-comparison
+          path: ${{ runner.temp }}/surya-ufs-comparison.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  surya-fsociety-dt-reference:
+    if: contains(github.event.pull_request.labels.*.name, 'surya-full-ci') || contains(github.event.pull_request.labels.*.name, 'surya-fsociety-ci')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: cykside/msm-4.14
+          ref: 8d46546a6674c65f317330b807dd0023b7d6305a
+          path: out/fsociety-reference
+          persist-credentials: false
+          sparse-checkout: |
+            arch/arm64/boot/dts
+            include/dt-bindings
+            include/uapi/linux
+      - name: Install device tree compiler
+        run: sudo apt-get update && sudo apt-get install -y device-tree-compiler
+      - name: Compile the pinned base and both overlay variants offline
+        run: |
+          src=out/fsociety-reference
+          work=$(mktemp -d)
+          trap 'rm -rf -- "$work"' EXIT
+          for name in sdmmagpie sdmmagpie-idp-overlay sdmmagpie-idp-overlay-miui; do
+            if ! gcc -E -nostdinc -I "$src/include" -undef -D__DTS__ -x assembler-with-cpp \
+              "$src/arch/arm64/boot/dts/qcom/$name.dts" -o "$work/$name.dts" > "$work/cpp.log" 2>&1; then
+              cat "$work/cpp.log"
+              detail=$(grep -m 1 -E 'fatal error:|error:' "$work/cpp.log" || true)
+              printf '::error title=Surya FSociety preprocessing::%s: %s\n' "$name" "${detail//%/%25}"
+              exit 1
+            fi
+            if ! dtc -q -@ -I dts -O dtb -o "$work/$name.dtb" "$work/$name.dts" > "$work/dtc.log" 2>&1; then
+              cat "$work/dtc.log"
+              detail=$(head -n 1 "$work/dtc.log")
+              printf '::error title=Surya FSociety compilation::%s: %s\n' "$name" "${detail//%/%25}"
+              exit 1
+            fi
+          done
+          python3 scripts/dtc/surya-exact-overlay-tool.py "$work/fdtoverlay-exact"
+          for name in sdmmagpie-idp-overlay sdmmagpie-idp-overlay-miui; do
+            if sh scripts/dtc/surya-overlay-check.sh "$work/sdmmagpie.dtb" "$work/$name.dtb" > "$work/report" 2>&1; then
+              result=applied
+            else
+              result=rejected
+            fi
+            for tool in fdtoverlay-exact-control fdtoverlay-exact; do
+              if "$work/$tool" -i "$work/sdmmagpie.dtb" -o "$work/$name-$tool.dtb" "$work/$name.dtb" >> "$work/report" 2>&1; then
+                outcome=applied
+              else
+                outcome=rejected
+              fi
+              printf '%s: %s\n' "$tool" "$outcome" >> "$work/report"
+              if [ "$tool" = fdtoverlay-exact ]; then exact=$outcome; else control=$outcome; fi
+            done
+            if [ "$exact" = applied ]; then
+              merged="$work/$name-fdtoverlay-exact.dtb"
+              for node in /reserved-memory/xbl_aop_mem@85e00000 \
+                          /reserved-memory/cdsp_regions@93900000 \
+                          /reserved-memory/pil_adsp_region@95700000 \
+                          /reserved-memory/cont_splash_region@9c000000 \
+                          /soc/qcom,cmd-db@c3f000c /soc/ufshc@1d84000; do
+                reg=$(fdtget -t x "$merged" "$node" reg 2>/dev/null || echo absent)
+                printf '%s reg: %s\n' "$node" "$reg" >> "$work/report"
+              done
+              xbl=$(fdtget -t x "$merged" /reserved-memory/xbl_aop_mem@85e00000 reg)
+              cmd=$(fdtget -t x "$merged" /soc/qcom,cmd-db@c3f000c reg)
+              test "$xbl" = '0 85e00000 0 1ff000'
+              test "$cmd" = 'c3f000c 8'
+              host=/soc/ufshc@1d84000
+              phy=/soc/ufsphy_mem@1d87000
+              host_reg=$(fdtget -t x "$merged" "$host" reg)
+              phy_reg=$(fdtget -t x "$merged" "$phy" reg)
+              test "$host_reg" = '1d84000 3000 1d90000 8000'
+              test "$phy_reg" = '1d87000 ddc'
+              for node in "$host" "$phy"; do
+                test "$(fdtget -t u "$merged" "$node" lanes-per-direction)" = 1
+              done
+              printf '::notice title=Surya FSociety UFS reference::%s; host=%s; PHY=%s\n' "$name" "$host_reg" "$phy_reg"
+              for node in "$host" "$phy"; do
+                for property in compatible clock-names reset-names pinctrl-names; do
+                  value=$(fdtget -t s "$merged" "$node" "$property" 2>/dev/null || echo absent)
+                  printf '%s %s: %s\n' "$node" "$property" "$value" >> "$work/report"
+                done
+              done
+              printf '::notice title=Surya FSociety merged layout::%s; XBL/AOP=%s; Command DB registers=%s\n' "$name" "$xbl" "$cmd"
+            fi
+            first=$(head -n 1 "$work/report")
+            error=$(grep -m 1 'FDT_ERR_' "$work/report" || true)
+            dtc -q -I dtb -O dts "$work/$name.dtb" > "$work/display.dts"
+            display=$(awk '
+              /^[[:space:]]*qcom,dsi-display[[:space:]]*[{]/ {node=1; next}
+              node && /^[[:space:]]*[}];/ {node=0}
+              node && /qcom,platform-reset-gpio|qcom,platform-te-gpio|qcom,dsi-ctrl|qcom,dsi-phy|^[[:space:]]*clocks[[:space:]]*=|pinctrl-[01]|vddio-supply|lab-supply|ibb-supply/ {n++}
+              END {print n+0}
+            ' "$work/display.dts")
+            printf '::notice title=Surya FSociety reference::%s %s; %s; exact display properties: %s; same-version control=%s exact=%s; %s\n' "$name" "$result" "${first//%/%25}" "$display" "$control" "$exact" "${error//%/%25}"
+            {
+              printf '### %s: %s\n\n' "$name" "$result"
+              printf '\x60\x60\x60text\n'
+              cat "$work/report"
+              printf '\x60\x60\x60\n'
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  surya-kernel-image:
+    if: contains(github.event.pull_request.labels.*.name, 'surya-full-ci') || contains(github.event.pull_request.labels.*.name, 'surya-image-ci') || contains(github.event.pull_request.labels.*.name, 'surya-twrp-test')
+    # Independent build: only the stock audit needs the DTB artifact.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.cache/surya-ccache
+      CCACHE_MAXSIZE: 600M
+      CCACHE_COMPILERCHECK: content
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install kernel build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flex bison bc libelf-dev libssl-dev dwarves ccache device-tree-compiler
+      - name: Set up Violet Android Clang r487747c
+        run: bash .github/scripts/setup-surya-clang.sh
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: surya-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: surya-ccache-v1-${{ runner.os }}-${{ runner.arch }}-
+      - name: Resolve the Surya configuration
+        run: make O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 gki_defconfig vendor/surya.config
+      - name: Compare vendor module requests against resolved Surya config
+        run: |
+          if grep -Eq '^CONFIG_(KSU|KERNELSU)(_[A-Z0-9_]+)?=[ym]$' out/surya/.config; then
+            echo 'Surya bring-up must not enable KernelSU' >&2
+            exit 1
+          fi
+          report="$RUNNER_TEMP/surya-module-config.tsv"
+          grep -Fx CONFIG_ARM_SMMU=y out/surya/.config
+          grep -Fx CONFIG_ARM_SMMU_QCOM=y out/surya/.config
+          grep -Fx CONFIG_REGULATOR_RPMH=y out/surya/.config
+          grep -Fx CONFIG_REGULATOR_PROXY_CONSUMER=y out/surya/.config
+          grep -Fx CONFIG_NVMEM_QCOM_QFPROM=y out/surya/.config
+          for config in PSTORE PSTORE_RAM PSTORE_CONSOLE PSTORE_PMSG SERIAL_CORE SERIAL_EARLYCON SERIAL_EARLYCON_RAMOOPS SOFTLOCKUP_DETECTOR; do
+            grep -Fx "CONFIG_${config}=y" out/surya/.config
+          done
+          if grep -Eq '^CONFIG_(POWER_RESET_QCOM_DOWNLOAD_MODE|QCOM_FORCE_WDOG_BITE_ON_PANIC)=[ym]$' out/surya/.config; then
+            echo 'Surya pstore test requires download mode and panic watchdog bite disabled' >&2
+            exit 1
+          fi
+          for config in SM_GCC_6150 QCOM_CLK_RPMH QCOM_GDSC_REGULATOR QCOM_PDC SPMI_MSM_PMIC_ARB INTERCONNECT_QCOM_SM6150 SCSI_UFS_QCOM; do
+            grep -Fx "CONFIG_${config}=y" out/surya/.config
+          done
+          # The driver that binds /soc/ufsphy_mem@1d87000 is the one whose
+          # of_match_table carries the DT's compatible string.  Stock 4.14
+          # (sdmmagpie.dtsi) names "qcom,ufs-phy-qmp-v3", and in this tree that
+          # string belongs to phy-qcom-ufs-qmp-v3.c, behind
+          # CONFIG_PHY_QCOM_UFS_V3_SM4350 -- a symbol named after the chipset that
+          # shipped with the file, not after the PHY inside it.  It must be on:
+          # with it off the node has no driver, and binding V4 instead programs
+          # 2/3 of the calibration registers for another PHY revision.
+          grep -Fx CONFIG_PHY_QCOM_UFS_V3_SM4350=y out/surya/.config
+          if grep -Fxq CONFIG_PHY_QCOM_UFS_V3=y out/surya/.config; then
+            echo '::error::Surya must not build the SDM660 UFS PHY driver in place of the QMP v3 one'
+            exit 1
+          fi
+          for config in PM_GENERIC_DOMAINS_OF ARM_PSCI_CPUIDLE_DOMAIN QCOM_RPMH INTERCONNECT_QCOM_BCM_VOTER; do
+            grep -Fx "CONFIG_${config}=y" out/surya/.config
+          done
+          awk -F= '
+            FNR == NR {
+              if ($1 ~ /^CONFIG_/) state[$1] = $2
+              next
+            }
+            /^CONFIG_.*=m$/ {print $1 "\t" (($1 in state) ? state[$1] : "unset")}
+          ' out/surya/.config arch/arm64/configs/vendor/sdmsteppeauto_GKI.config > "$report"
+          test -s "$report"
+          {
+            echo '### sdmsteppeauto module options in resolved Surya config'
+            awk -F '\t' '{count[$2]++} END {
+              printf "Requested: %d; modular: %d; built-in: %d; disabled/unset: %d\n", NR, count["m"], count["y"], NR-count["m"]-count["y"]
+            }' "$report"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: surya-module-config-audit
+          path: ${{ runner.temp }}/surya-module-config.tsv
+          if-no-files-found: error
+          retention-days: 7
+      - name: Link the arm64 kernel and build Image.gz
+        run: |
+          log="$RUNNER_TEMP/surya-kernel-build.log"
+          set -o pipefail
+          if ! make -j"$(nproc)" O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 CC="ccache clang" Image.gz 2>&1 | tee "$log"; then
+            grep -im 12 -E 'error:|undefined (symbol|reference)|no rule to make target|killed|fatal:' "$log" \
+              | while IFS= read -r line; do
+                  line=${line//%/%25}
+                  printf '::error::%s\n' "$line"
+                done || true
+            exit 1
+          fi
+          test -s out/surya/vmlinux
+          test -s out/surya/arch/arm64/boot/Image.gz
+          gzip -t out/surya/arch/arm64/boot/Image.gz
+      - name: Package the Surya single-symbol test pair for inspection
+        run: |
+          make -j2 O=out/surya ARCH=arm64 LLVM=1 LLVM_IAS=1 vendor/qcom/surya-sm6150-v2-test.dtb
+          boot=out/surya/arch/arm64/boot
+          bundle="$RUNNER_TEMP/surya-offline-pair"
+          mkdir -p "$bundle"
+          cp "$boot/Image.gz" "$bundle/Image.gz"
+          cp "$boot/dts/vendor/qcom/surya-sm6150-v2-test.dtb" "$bundle/surya-base.dtb"
+          dtc -@ -I dts -O dtb -o "$bundle/surya-ufs.dtbo" \
+            arch/arm64/boot/dts/vendor/qcom/surya-sm6150-overlay-test.dts
+          test "$(fdtget -p "$bundle/surya-base.dtb" /__symbols__)" = soc
+          test "$(fdtget -p "$bundle/surya-ufs.dtbo" /__fixups__)" = soc
+          sh scripts/dtc/surya-overlay-check.sh "$bundle/surya-base.dtb" "$bundle/surya-ufs.dtbo"
+          python3 - "$bundle" <<'PYTHON'
+          import struct
+          import sys
+          from pathlib import Path
+
+          bundle = Path(sys.argv[1])
+          overlay = (bundle / 'surya-ufs.dtbo').read_bytes()
+          # Match the observed Android v0 table envelope. This does not
+          # imply equivalent overlay content or bootloader acceptance.
+          table = struct.pack('>8I', 0xd7b7ab1e, 64 + len(overlay), 32, 32, 1, 32, 4096, 0)
+          entry = struct.pack('>8I', len(overlay), 64, 0, 0, 0, 0, 0, 0)
+          (bundle / 'surya-ufs.dtbo-table.test').write_bytes(table + entry + overlay)
+          PYTHON
+          work=$(mktemp -d)
+          trap 'rm -rf -- "$work"' EXIT
+          python3 - "$bundle/surya-ufs.dtbo-table.test" "$work/extracted.dtbo" <<'PYTHON'
+          import struct
+          import sys
+          from pathlib import Path
+
+          image = Path(sys.argv[1]).read_bytes()
+          header = struct.unpack_from('>8I', image)
+          if header != (0xd7b7ab1e, len(image), 32, 32, 1, 32, 4096, 0):
+              raise SystemExit(f'Unexpected DTBO table header: {header}')
+          size, offset, *metadata = struct.unpack_from('>8I', image, header[5])
+          if offset != 64 or offset + size != len(image) or any(metadata):
+              raise SystemExit('Unexpected DTBO entry offset, size, or metadata')
+          Path(sys.argv[2]).write_bytes(image[offset:offset + size])
+          PYTHON
+          cmp "$bundle/surya-ufs.dtbo" "$work/extracted.dtbo"
+          fdtoverlay -i "$bundle/surya-base.dtb" -o "$work/merged.dtb" "$work/extracted.dtbo"
+          for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000; do
+            test "$(fdtget -t s "$work/merged.dtb" "$node" status)" = okay
+          done
+          cat > "$bundle/README.txt" <<'EOF'
+          POCO X3 NFC (surya), Linux 6.1, offline test components only.
+          This archive is NOT an AnyKernel3 installer and contains no flashable boot image. The .test DTBO table is for offline format inspection only.
+          Image.gz is the kernel payload; surya-base.dtb and surya-ufs.dtbo are the matching experimental pair.
+          The experimental overlay enables UFS on its matching base only; it is not a drop-in replacement for the active DTBO.
+          Bootloader acceptance, AVB and UFS operation on hardware have not been validated.
+          Do not install this archive in TWRP or write these files to a partition.
+          EOF
+          (cd "$bundle" && sha256sum Image.gz surya-base.dtb surya-ufs.dtbo surya-ufs.dtbo-table.test > SHA256SUMS)
+      - name: Dry-run the observed Surya boot v2 layout
+        run: |
+          set -o pipefail
+          python3 - <<'PYTHON' | tee -a "$GITHUB_STEP_SUMMARY"
+          import runpy
+          from pathlib import Path
+          from os import environ
+
+          tools = runpy.run_path('scripts/dtc/surya-boot-v2-layout.py')
+          bundle = Path(environ['RUNNER_TEMP']) / 'surya-offline-pair'
+          observed = dict(page_size=4096, kernel_offset=4096,
+                          ramdisk_size=0xc1915, dtb_load_address=0x01f00000)
+          plan = tools['replacement_plan'](
+              observed, bundle / 'Image.gz', bundle / 'surya-base.dtb')
+          print('### Observed Surya boot v2 layout — dry run only')
+          print('No boot image produced; excludes AVB and active DTBO validation.')
+          payload = plan['padded_payload_end']
+          # Measured with blockdev on the Surya test device, not inferred from the image.
+          capacity = 134217728
+          remaining = capacity - payload
+          if remaining < 0:
+              raise SystemExit(f'Aligned payload exceeds measured boot capacity by {-remaining} bytes')
+          plan.update(measured_boot_capacity=capacity, remaining_before_avb=remaining)
+          print(f'::notice title=Surya boot v2 dry run::Aligned payload {payload}/{capacity} bytes; {remaining} bytes left before AVB; DTBO unverified')
+          print('```text')
+          for field, value in plan.items():
+              print(f'{field}: {value:#x} ({value} bytes)')
+          print('```')
+          PYTHON
+      - name: Round-trip an unsigned Surya boot v2 fixture (offline only)
+        run: |
+          python3 - <<'PYTHON'
+          import runpy
+          import struct
+          import subprocess
+          import tempfile
+          from pathlib import Path
+          from os import environ
+
+          bundle = Path(environ['RUNNER_TEMP']) / 'surya-offline-pair'
+          kernel = bundle / 'Image.gz'
+          dtb = bundle / 'surya-base.dtb'
+          old_kernel = bytes.fromhex('1f8b08')  # Synthetic prefix, not a bootable kernel.
+          old_dtb = struct.pack('>II', 0xd00dfeed, 40) + bytes(32)
+          ramdisk = b'reference-ramdisk-fixture' * 301
+          header = bytearray(1660)
+          header[:8] = b'ANDROID!'
+          for offset, value in ((8, len(old_kernel)), (16, len(ramdisk)),
+                                (36, 4096), (40, 2), (1644, 1660),
+                                (1648, len(old_dtb)), (1652, 0x01f00000)):
+              struct.pack_into('<I', header, offset, value)
+
+          tools = runpy.run_path('scripts/dtc/surya-boot-v2-repack-offline.py')
+          with tempfile.TemporaryDirectory() as directory:
+              reference = Path(directory) / 'reference.img'
+              output = Path(directory) / 'surya.unsigned-fixture.img'
+              reference.write_bytes(b''.join(bytes(section) + bytes(-len(section) % 4096)
+                                             for section in (header, old_kernel, ramdisk, old_dtb))
+                                    + b'AVBf' + bytes(60))
+              layout = tools['repack'](reference, kernel, dtb, output)
+              image = output.read_bytes()
+              for offset, data in ((layout['kernel_offset'], kernel.read_bytes()),
+                                   (layout['ramdisk_offset'], ramdisk),
+                                   (layout['dtb_offset'], dtb.read_bytes())):
+                  if image[offset:offset + len(data)] != data:
+                      raise SystemExit(f'Payload mismatch at {offset:#x}')
+              boot_dtb = Path(directory) / 'extracted-boot.dtb'
+              boot_dtb.write_bytes(image[layout['dtb_offset']:layout['dtb_offset'] + layout['dtb_size']])
+              packed = (bundle / 'surya-ufs.dtbo-table.test').read_bytes()
+              size, offset = struct.unpack_from('>II', packed, 32)
+              overlay = Path(directory) / 'extracted-overlay.dtbo'
+              overlay.write_bytes(packed[offset:offset + size])
+              merged = Path(directory) / 'merged.dtb'
+              subprocess.run(['fdtoverlay', '-i', str(boot_dtb), '-o', str(merged), str(overlay)], check=True)
+              for node in ('/soc/ufshc@1d84000', '/soc/ufsphy_mem@1d87000'):
+                  status = subprocess.check_output(['fdtget', '-t', 's', str(merged), node, 'status'], text=True)
+                  if status.strip() != 'okay':
+                      raise SystemExit(f'UFS not enabled after repack and packed overlay: {node}')
+              if image[-64:-60] == b'AVBf':
+                  raise SystemExit('Offline repack unexpectedly carried the reference footer')
+          print('Surya v2 round-trip passed; no image retained or published.')
+          PYTHON
+      - uses: actions/upload-artifact@v4
+        with:
+          name: surya-v2-pair-OFFLINE-NOT-FOR-FLASH
+          path: ${{ runner.temp }}/surya-offline-pair/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Assemble the no-write Surya TWRP diagnostic
+        if: contains(github.event.pull_request.labels.*.name, 'surya-twrp-test')
+        run: |
+          work=$(mktemp -d)
+          trap 'rm -rf -- "$work"' EXIT
+          pin=41f04bdb4ee30a44e429c2c1131d5e8bb32b15f1
+          curl -fsSL --retry 2 "https://codeload.github.com/osm0sis/AnyKernel3/tar.gz/$pin" -o "$work/ak3.tar.gz"
+          mkdir "$work/installer"
+          tar -xzf "$work/ak3.tar.gz" -C "$work/installer" --strip-components=1
+          bundle="$RUNNER_TEMP/surya-offline-pair"
+          cp tools/surya-anykernel/anykernel.sh "$work/installer/anykernel.sh"
+          cp "$bundle/Image.gz" "$work/installer/Image.gz"
+          cp "$bundle/surya-base.dtb" "$work/installer/dtb"
+          cp "$bundle/surya-ufs.dtbo-table.test" "$work/installer/dtbo.img"
+          cd "$work/installer"
+          cp tools/ak3-core.sh "$work/original-core.sh"
+          cp "$GITHUB_WORKSPACE/tools/surya-anykernel/boot-test.sh" "$work/boot-test.sh"
+          python3 - <<'PYTHON'
+          from pathlib import Path
+
+          core = Path('tools/ak3-core.sh')
+          text = core.read_text()
+          start = text.index('  blockdev --setrw $BLOCK')
+          end = text.index('\n}', start)
+          text = text[:start] + '  surya_report_repack; # SURYA_DIAGNOSTIC_NO_FLASH\n  return $?;' + text[end:]
+          core.write_text(text)
+          PYTHON
+          sh -n anykernel.sh tools/ak3-core.sh
+          sha256sum Image.gz dtb dtbo.img > SURYA-SHA256SUMS
+          zip -q -r "$RUNNER_TEMP/Surya-6.1-TWRP-DIAGNOSTIC-NO-WRITE.zip" META-INF tools LICENSE anykernel.sh Image.gz dtb dtbo.img SURYA-SHA256SUMS
+          unzip -tq "$RUNNER_TEMP/Surya-6.1-TWRP-DIAGNOSTIC-NO-WRITE.zip"
+          cp "$work/original-core.sh" tools/ak3-core.sh
+          cp "$work/boot-test.sh" anykernel.sh
+          # Make UFS available even if ABL does not apply the trial DTBO.
+          # Reapplying the matching DTBO is harmless: it only sets these statuses.
+          fdtoverlay -i "$bundle/surya-base.dtb" -o dtb "$bundle/surya-ufs.dtbo"
+          test "$(fdtget -t s dtb /soc/ufshc@1d84000 status)" = okay
+          test "$(fdtget -t s dtb /soc/ufsphy_mem@1d87000 status)" = okay
+          # Same assertion for the DTB the zip ships: the compatible must be the
+          # string stock gives this silicon, and the driver behind it must be the
+          # one the flashable image actually builds (the general check in the DTB
+          # job walks the of_match tables against out/surya/.config).
+          test "$(fdtget -t s dtb /soc/ufsphy_mem@1d87000 compatible)" = 'qcom,ufs-phy-qmp-v3'
+          if ! grep -q 'if (err && err != -ENODATA)' "$GITHUB_WORKSPACE/drivers/phy/qualcomm/phy-qcom-ufs.c"; then
+            echo '::error::phy-qcom-ufs must treat a missing *-supply property as "rail left as the bootloaders set it"'
+            exit 1
+          fi
+          if ! grep -qE 'if \(!vreg \|\| vreg->enabled \|\| !vreg->reg\)' "$GITHUB_WORKSPACE/drivers/phy/qualcomm/phy-qcom-ufs.c"; then
+            echo '::error::ufs_qcom_phy_enable_vreg() must guard a NULL regulator (regulator_enable() dereferences it)'
+            exit 1
+          fi
+          # "A driver has to exist for the PHY node" and "the PHY's hardware
+          # programming is safe on this board" are different claims that one flash
+          # used to test at once.  surya_phy=stub keeps the driver bound, the clocks
+          # enabled and the host-side reset toggled, and diverts every access to
+          # phy->mmio into a RAM buffer, so the two can be separated without
+          # rebuilding the driver.  It must default to hardware -- flipping it is a
+          # deliberate one-line change to the bootargs, never an accident -- and both
+          # modes have to name themselves, because a capture that cannot say which
+          # mode it ran in is worth half as much.
+          if ! grep -q '__setup("surya_phy=",' "$GITHUB_WORKSPACE/drivers/phy/qualcomm/phy-qcom-ufs.c"; then
+            echo '::error::phy-qcom-ufs must keep the surya_phy= stub switch (see Documentation/arm64/surya-bringup.rst)'
+            exit 1
+          fi
+          if ! grep -q 'Surya phy: mode=%s' "$GITHUB_WORKSPACE/drivers/phy/qualcomm/phy-qcom-ufs.c"; then
+            echo '::error::the UFS PHY must print mode=stub or mode=hardware at probe, or a capture cannot be interpreted'
+            exit 1
+          fi
+          for f in tools/surya-anykernel/boot-test.sh tools/surya-anykernel/anykernel.sh \
+                   arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dts; do
+            if grep -q 'surya_phy' "$GITHUB_WORKSPACE/$f"; then
+              echo "::error::$f sets surya_phy=; a boot meant as a real attempt must run mode=hardware (remove this gate with the .rst entry that explains the flip)"
+              exit 1
+            fi
+          done
+          host=/soc/ufshc@1d84000
+          phy=/soc/ufsphy_mem@1d87000
+          aggre=/soc/interconnect@16e0000
+          test "$(fdtget -t s dtb /soc/clock-controller@100000 compatible)" = 'xiaomi,surya-gcc qcom,sm6150-gcc syscon'
+          test "$(fdtget -t x dtb "$aggre" reg)" = '16e0000 11080'
+          aggre_properties=$(fdtget -p dtb "$aggre")
+          if grep -qx clocks <<< "$aggre_properties"; then
+            echo '::error::Surya trial DTB retained inherited Aggre1 QoS clocks'
+            exit 1
+          fi
+          test "$(fdtget -t x dtb "$phy" resets)" = "$(fdtget -t x dtb "$host" phandle) 0"
+          grep -qx qcom,skip-qos <<< "$aggre_properties"
+          rsc=/soc/rsc@18200000
+          voter=$rsc/drv@2/bcm_voter
+          test "$(fdtget -t s dtb "$aggre" qcom,bcm-voter-names)" = hlos
+          test "$(fdtget -t x dtb "$aggre" qcom,bcm-voters)" = "$(fdtget -t x dtb "$voter" phandle)"
+          test "$(fdtget -t s dtb "$voter" compatible)" = qcom,bcm-voter
+          test "$(fdtget -t u dtb "$rsc/drv@2" qcom,drv-id)" = 2
+          disp_drv=/soc/rsc@af20000/drv@0
+          disp_voter=$disp_drv/bcm_voter
+          test "$(fdtget -t u dtb "$disp_drv" qcom,drv-id)" = 0
+          test "$(fdtget -t s dtb "$disp_voter" compatible)" = qcom,bcm-voter
+          apps_handle=$(fdtget -t x dtb "$voter" phandle)
+          disp_handle=$(fdtget -t x dtb "$disp_voter" phandle)
+          test "$apps_handle" != "$disp_handle"
+          for noc in /soc/interconnect@2 /soc/interconnect@9680000 /soc/interconnect@1740000; do
+            test "$(fdtget -t s dtb "$noc" qcom,bcm-voter-names)" = 'hlos disp'
+            test "$(fdtget -t x dtb "$noc" qcom,bcm-voters)" = "$apps_handle $disp_handle"
+          done
+          test "$(fdtget -t x dtb "$rsc" power-domains)" = "$(fdtget -t x dtb /psci/cluster-pd phandle)"
+          test "$(fdtget -t s dtb /psci compatible)" = arm,psci-1.0
+          test "$(fdtget -t s dtb /psci method)" = smc
+          test "$(fdtget -t s dtb "$rsc/drv@2/clock-controller" compatible)" = qcom,sm6150-rpmh-clk
+          test "$(fdtget -t s dtb "$host" compatible)" = qcom,ufshc
+          # The compatible must name the PHY revision the silicon has, which is a
+          # question the stock DT answers and a Kconfig prompt does not: stock 4.14
+          # (sdmmagpie.dtsi) binds "qcom,ufs-phy-qmp-v3", and this tree's
+          # phy-qcom-ufs-qmp-v3.h reproduces its calibration table entry for entry.
+          # See the note in surya-sm6150.dts before changing this.
+          test "$(fdtget -t s dtb "$phy" compatible)" = qcom,ufs-phy-qmp-v3
+          # A compatible string is only useful if some *built* driver lists it, and
+          # only useful to this board if that driver's tables are the board's.  The
+          # file that carries v3 sits behind CONFIG_PHY_QCOM_UFS_V3_SM4350 -- a
+          # symbol named after the chipset that shipped with it, not after the PHY
+          # -- so check the tables, never the label.
+          # Every path here is anchored at $GITHUB_WORKSPACE, not relative.
+          # This step runs with cwd = the temp installer directory (it has to,
+          # to zip it), and the first version of this loop used relative
+          # paths, so the grep found no drivers at all and the only way to
+          # notice was a red run: "no driver under drivers/phy/qualcomm
+          # mentions qcom,ufs-phy-qmp-v3" on a tree that builds exactly that
+          # driver.  out/surya/.config is the build output, likewise.
+          for c in $(fdtget -t s dtb "$phy" compatible); do
+            files=$(grep -l ""$c"" "$GITHUB_WORKSPACE/drivers/phy/qualcomm/"*.c || true)
+            if [ -z "$files" ]; then
+              echo "::error::no driver under drivers/phy/qualcomm mentions $c"
+              exit 1
+            fi
+            built=0
+            for f in $files; do
+              sym=$(grep -F "$(basename "$f" .c).o" "$GITHUB_WORKSPACE/drivers/phy/qualcomm/Makefile" |
+                    sed -n 's/^obj-\$(CONFIG_\([A-Z0-9_]*\)).*/\1/p' | head -1)
+              [ -n "$sym" ] || continue
+              if grep -Fxq "CONFIG_${sym}=y" "$GITHUB_WORKSPACE/out/surya/.config"; then
+                built=1
+                echo "$c -> $(basename "$f") ($sym=y)"
+                hdr=$( { grep -o 'phy-qcom-ufs-qmp[a-z0-9.-]*\.h' "$f" || true; } | head -1 || true)
+                if [ -z "$hdr" ]; then
+                  echo "::error::$f includes no qmp header, so its calibration-table size cannot be checked against stock's 88 entries"
+                  exit 1
+                fi
+                n=$(grep -c UFS_QCOM_PHY_CAL_ENTRY "$GITHUB_WORKSPACE/drivers/phy/qualcomm/$hdr" || true)
+                if [ "$n" != 88 ]; then
+                  echo "::error::$f uses $hdr with $n calibration entries; stock's v3 table has 88, so this driver is not the PHY revision the board has (v4 has 177, v3-660 has 76)"
+                  exit 1
+                fi
+              fi
+            done
+            if [ "$built" != 1 ]; then
+              echo "::error::$c is only carried by a driver this configuration does not build; enable its CONFIG_ symbol in arch/arm64/configs/vendor/surya.config"
+              exit 1
+            fi
+          done
+          test "$(fdtget -t x dtb "$host" phys)" = "$(fdtget -t x dtb "$phy" phandle)"
+          # This tree's PHY driver asks the host for its reset line (unlike
+          # the 4.14 driver), which only works because the host is a reset
+          # provider here -- ufs-qcom.c registers one, and the DTB has to
+          # describe it or of_reset_control_get() returns -ENOENT at phy init.
+          test "$(fdtget -t u dtb "$host" '#reset-cells')" = 1
+          test "$(fdtget -t x dtb "$phy" resets)" = "$(fdtget -t x dtb "$host" phandle) 0"
+          # Preserve the contiguous FSociety splash, DFPS and pstore ranges.
+          test "$(fdtget -t x dtb /reserved-memory/splash_region reg)" = '0 9c000000 0 1700000'
+          test "$(fdtget -t x dtb /reserved-memory/dfps_data_region@9d700000 reg)" = '0 9d700000 0 100000'
+          # The ramoops node has to mirror what the recovery kernel reads, and
+          # both DTBs the device can boot with are checked: the board one and
+          # the one this zip ships, which is assembled from the offline audit
+          # layers and can therefore be edited into agreement here and broken
+          # into disagreement there.  scripts/dtc/surya-ramoops-check.py holds
+          # the rules and the capture lines they came from; it reports no-map
+          # instead of requiring either value, because the flashable DTB has had
+          # it since 3fd371679 and the four readable captures came out of that
+          # shape.  The old literals in this step -- reg 0 9d800000 0 400000 and
+          # console-size 1048576 -- are gone because restating a derived number
+          # somewhere it cannot fail is how four builds passed quietly.
+          test "$(fdtget -t x "$bundle/surya-base.dtb" /reserved-memory/ramoops@9d800000 reg)" = \
+            "$(fdtget -t x dtb /reserved-memory/ramoops@9d800000 reg)" || {
+            echo "::error::the shipped DTB's ramoops reg differs from the base it was built from"
+            exit 1
+          }
+          python3 "$GITHUB_WORKSPACE/scripts/dtc/surya-ramoops-check.py" \
+            "$bundle/surya-base.dtb" dtb
+          if fdtget -l dtb /reserved-memory | grep -Fxq disp_rdump_region@9c000000; then
+            echo '::error::Inherited display ramdump overlaps the Surya splash reservation'
+            exit 1
+          fi
+          gdsc=/soc/qcom,gdsc@177004
+          # The vendor gdsc-regulator must not probe raw-offset windows
+          # (asynchronous SError, see Documentation/arm64/surya-bringup.rst).
+          test "$(fdtget -t s dtb "$gdsc" status)" = disabled
+          if fdtget -t x dtb "$host" vdd-hba-supply >/dev/null 2>&1; then
+            echo '::error::UFS host must not reference the raw-offset GDSC regulator'
+            exit 1
+          fi
+          # A regulator phandle on either UFS node is a silent probe blocker:
+          # the vendor rpmh-regulator registers LDOs as class devices, so the
+          # LDO child node never gains the struct device fw_devlink waits for.
+          for supply in vdd-hba-supply vcc-supply vccq2-supply \
+                        qcom,vddp-ref-clk-supply vdda-phy-supply vdda-pll-supply; do
+            if fdtget -t x dtb "$host" "$supply" >/dev/null 2>&1 ||
+               fdtget -t x dtb "$phy" "$supply" >/dev/null 2>&1; then
+              echo "::error::Surya UFS nodes must not depend on RPMh VRM regulators ($supply)"
+              exit 1
+            fi
+          done
+          # Bring-up knobs the 20:46 stall analysis forced: no strict supplier
+          # ordering, no PSCI idle entry, visible initcalls and probe messages.
+          bootargs=$(fdtget -t s dtb /chosen bootargs)
+          if ! grep -q 'fw_devlink=permissive' <<< "$bootargs"; then
+            echo '::error::Surya chosen bootargs lost fw_devlink=permissive'
+            exit 1
+          fi
+          if grep -q 'fw_devlink.strict' <<< "$bootargs"; then
+            echo '::error::Surya chosen bootargs still enforce strict supplier ordering'
+            exit 1
+          fi
+          for knob in 'cpuidle.off=1' 'loglevel=8' 'clk_ignore_unused' 'softlockup_panic=1'; do
+            if ! grep -q "$knob" <<< "$bootargs"; then
+              echo "::error::Surya chosen bootargs lost $knob"
+              exit 1
+            fi
+          done
+          # initcall_debug floods ~1500 lines into a 2 MiB console prz, and the
+          # 2026-11-28 22:2x capture came back with this boot and the next one
+          # byte-interleaved because of it.  The gcc_sm6150_probe() stage
+          # markers below replace it, so a regression here costs the diagnosis.
+          if grep -q 'initcall_debug' <<< "$bootargs"; then
+            echo '::error::Surya bootargs must not enable initcall_debug: the console prz wraps and the capture is unreadable'
+            exit 1
+          fi
+          if grep -q "patch_cmdline 'initcall_debug'" anykernel.sh \
+               "$GITHUB_WORKSPACE/tools/surya-anykernel/anykernel.sh"; then
+            echo '::error::Surya installer must not patch initcall_debug onto the stock cmdline'
+            exit 1
+          fi
+          # The one-word GCC stage markers are the only thing that names where
+          # gcc_sm6150_probe() stops; without them the next capture is silent
+          # again and the storage stall is guesswork.
+          # The SM8150 "keep clocks always enabled" writes must stay off this
+          # board: 0x48004 is gcc_cpuss_gnoc_clk's halt bit on SM6150, and
+          # asserting it stops the CPU inside the GCC probe that every clock
+          # consumer waits for (console-ramoops-12.txt).  The two MISC writes the
+          # 4.14 driver does must stay.
+          if ! grep -q 'gcc_sm6150_stage(pdev, "misc-skipped")' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c"; then
+            echo '::error::Surya must skip every GCC MISC/always-on register write in gcc_sm6150_probe() (console-ramoops-13.txt)'
+            exit 1
+          fi
+          # clk_ignore_unused has to reach the *effective* cmdline, which comes
+          # from the boot image header, not from /chosen: without it the 6.1
+          # clk_disable_unused() pass gates the AHB path the 4.14 driver keeps
+          # alive through its critical-clk list.
+          # Both installer files must carry every knob, because the RAMOOPS zip
+          # ships boot-test.sh as its anykernel.sh (the cp further up this job)
+          # and only asserts the knobs against anykernel.sh -- so in the
+          # 2026-11-28 19:56 flash the repacked cmdline gained only
+          # rcupdate.rcu_expedited=0: clk_ignore_unused and softlockup_panic=1
+          # were patched by the file nobody flashed.  A gate on the diagnostic
+          # installer is not a gate on the boot.
+          for knob in 'clk_ignore_unused' 'softlockup_panic=' 'fw_devlink=' 'cpuidle.off=' 'panic=' 'loglevel=' 'earlycon='; do
+            for inst in tools/surya-anykernel/boot-test.sh tools/surya-anykernel/anykernel.sh; do
+              if ! grep -q "patch_cmdline '$knob" "$GITHUB_WORKSPACE/$inst"; then
+                echo "::error::$inst must patch_cmdline $knob; the boot header cmdline is what the kernel boots with"
+                exit 1
+              fi
+            done
+          done
+          if [ "$(grep -o "^patch_cmdline '[^']*'" "$GITHUB_WORKSPACE/tools/surya-anykernel/anykernel.sh" | sed "s/^patch_cmdline '//" | sort -u)" != "$(grep -o "^patch_cmdline '[^']*'" "$GITHUB_WORKSPACE/tools/surya-anykernel/boot-test.sh" | sed "s/^patch_cmdline '//" | sort -u)" ]; then
+            echo '::error::the two Surya installers patch different cmdline keys; the flashable zip uses boot-test.sh, so any knob missing there is a knob that is not set'
+            exit 1
+          fi
+          # A soft lockup report that does not reboot is a report that lands in
+          # the wrapped tail of the prz, or in no capture at all when the user has
+          # to force a hard reset (empty /sys/fs/pstore).
+          if ! grep -q 'panic("Surya bringup:' "$GITHUB_WORKSPACE/drivers/base/dd.c"; then
+            echo '::error::the Surya bring-up watchdog must panic on its final round while the chain is unsettled'
+            exit 1
+          fi
+          if ! grep -qE 'regmap_update_bits\(regmap, GCC_(CAMERA|VIDEO)_MISC' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c"; then
+            echo '::error::gcc_sm6150_probe() must keep the CAMERA/VIDEO MISC GPLL0 mask writes for non-Surya boards'
+            exit 1
+          fi
+          # ...but never on this board: the first GCC register access of the boot
+          # is the read regmap_update_bits() performs, and it wedged the CPU in
+          # console-ramoops-13.txt right after "Surya gcc: mapped".
+          if [ "$(awk '/gcc_sm6150_stage\(pdev, "misc-skipped"\)/ { print NR; exit }' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c")"                -ge "$(awk '/regmap_update_bits\(regmap, GCC_CAMERA_MISC/ { print NR; exit }' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c")" ]; then
+            echo '::error::the GCC MISC writes must sit after the misc-skipped marker, i.e. only in the non-Surya branch'
+            exit 1
+          fi
+          # The UFS branch clocks must keep the offsets this driver ships with.
+          # Commit 41d0eeb38 retargeted them to SDMMagpie numbers, which name no
+          # SM6150 register at all; the enable path then pokes unimplemented GCC
+          # space, which is exactly how the MISC writes stopped this CPU.  It only
+          # became fatal once 6c013cafa bound a driver that enables those clocks,
+          # and it cost five captures with an empty /sys/fs/pstore.  The expected
+          # values are the SoC register map: this file and the 4.14 vendor
+          # gcc-sm6150.c agree on all five.
+          python3 - "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c" <<'PYTHON'
+          import re
+          import sys
+
+          src = open(sys.argv[1]).read()
+          expected = {
+              "gcc_aggre_ufs_phy_axi_clk": "0x770c0",
+              "gcc_ufs_phy_axi_clk": "0x77010",
+              "gcc_ufs_phy_unipro_core_clk": "0x77040",
+              "gcc_ufs_phy_ice_core_clk": "0x77044",
+              "gcc_ufs_phy_phy_aux_clk": "0x77078",
+          }
+          for name, want in expected.items():
+              body = re.search(r'^static struct clk_branch %s = \{(.*?)^\};' % name,
+                               src, re.M | re.S)
+              if not body:
+                  sys.exit('::error::%s is missing from gcc-sm6150.c' % name)
+              got = re.search(r'\.halt_reg = (0x[0-9a-f]+),', body.group(1))
+              if not got or got.group(1) != want:
+                  sys.exit('::error::%s halt_reg is %s, but SM6150 names it %s' %
+                           (name, got.group(1) if got else 'absent', want))
+          for pattern, field in ((r'^\s*\w+(->|\.)halt_reg\s*=', 'halt_reg'),
+                                 (r'^\s*\w+(->|\.)hwcg_reg\s*=', 'hwcg_reg'),
+                                 (r'^\s*\w+(->|\.)clkr\.enable_reg\s*=', 'enable_reg'),
+                                 (r'^\s*\w+(->|\.)cmd_rcgr\s*=', 'cmd_rcgr')):
+              hit = re.search(pattern, src, re.M)
+              if hit:
+                  sys.exit('::error::gcc-sm6150.c must not retarget a clock %s at '
+                           'runtime (%s): the offsets belong to this SoC, not to '
+                           'the board the stock DTB came from' % (field, hit.group(0).strip()))
+          PYTHON
+          if ! grep -q 'Surya gcc: ' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c"; then
+            echo '::error::Surya needs the pr_notice stage markers in gcc_sm6150_probe() (see console-ramoops-11.txt)'
+            exit 1
+          fi
+          # Only WFI may be offered to the scheduler: the downstream PSCI
+          # implementation rejects the OSI-mode switch, so the vendor
+          # power-down states wedge CPUs (CPU#7 in the 2026-11-27 capture).
+          for state in /idle-states/silver-c3 /idle-states/silver-c4 \
+                       /idle-states/gold-c3 /idle-states/gold-c4; do
+            test "$(fdtget -t s dtb "$state" status)" = disabled
+          done
+          # The provider chain the kernel drives from a kernel thread lists its
+          # dependencies as absolute DT paths, and a mistyped one simply stops
+          # being a dependency.  Check every entry against the compiled tree and
+          # keep the SDMMagpie aggre2 block out of it for good: that address has
+          # no node on SM6150, and an earlier capture read its absence as a
+          # missing UFS supplier.
+          dd_c="$GITHUB_WORKSPACE/drivers/base/dd.c"
+          test -s "$dd_c"
+          sed -n '/surya_chain\[\] = {/,/^};/p' "$dd_c" |
+            sed -n 's/.*"\/\(.*\)".*/\/\1/p' > "$RUNNER_TEMP/surya-chain.txt"
+          test "$(wc -l < "$RUNNER_TEMP/surya-chain.txt")" -ge 18
+          while read -r node; do
+            if ! fdtget -p dtb "$node" >/dev/null 2>&1; then
+              printf '::error::Surya probe chain names a node the DTB lacks (%s)\n' "$node"
+              exit 1
+            fi
+          done < "$RUNNER_TEMP/surya-chain.txt"
+          if grep -q 'interconnect@1700000' "$dd_c"; then
+            echo '::error::Surya must not chase the SDMMagpie aggre2 block at 0x1700000'
+            exit 1
+          fi
+          # GCC must resolve its always-on CX class through the rail that is
+          # provably resolvable (the one dispcc probes with in 6.8 ms).  If the
+          # AO arc child comes back here, /soc/ufshc@1d84000 goes back to
+          # waiting on a clock provider that never finishes registering.
+          gcc_node=/soc/clock-controller@100000
+          cx=$(fdtget -t x dtb "$gcc_node" vdd_cx-supply | tr -d '[:space:]')
+          cx_ao=$(fdtget -t x dtb "$gcc_node" vdd_cx_ao-supply | tr -d '[:space:]')
+          if [ -z "$cx" ] || [ "$cx_ao" != "$cx" ]; then
+            printf '::error::Surya GCC vdd_cx_ao-supply must equal vdd_cx-supply (got %s, want %s) or gcc_sm6150_probe() blocks on the MX AO arc child and UFS never probes\n' "$cx_ao" "$cx"
+            exit 1
+          fi
+          test "$(fdtget -t s dtb "$host" reset-names)" = rst
+          test "$(fdtget -t s dtb "$host" pinctrl-names)" = 'dev-reset-assert dev-reset-deassert'
+          test "$(fdtget -t s dtb "$host" interconnect-names)" = 'ufs-ddr cpu-ufs'
+          ufs_properties=$(fdtget -p dtb /soc/ufshc@1d84000)
+          if grep -xE 'iommus|qcom,iommu-dma' <<< "$ufs_properties"; then
+            echo '::error::Surya UFS must not inherit the SM6150 SMMU dependency'
+            exit 1
+          fi
+          # Stamp the exact kernel build into the zip and let the installer print
+          # it.  Seven rounds of this bring-up have argued about what was in the
+          # boot partition with no way to settle it, and the install log is already
+          # part of what comes back (/cache/recovery/log), so identity now costs
+          # nobody an extra step.
+          # The ramoops earlycon is the capture path this board can rely on, and
+          # it exists precisely because the boot dies mid-printk: the header must
+          # therefore be committed *before* the payload, or every crash costs the
+          # whole buffer instead of one record (the 2026-11-27 20:16 report:
+          # "found existing invalid buffer, size 57821, start 192977").
+          wr=$(awk '/^static void earlycon_ramoops_write/,/^}/' "$GITHUB_WORKSPACE/drivers/tty/serial/earlycon-ramoops.c")
+          line_size=$(grep -n -m1 'writel_relaxed(size, &rbuf->size)' <<< "$wr" | cut -d: -f1)
+          line_start=$(grep -n -m1 'writel_relaxed(end, &rbuf->start)' <<< "$wr" | cut -d: -f1)
+          line_pay=$(grep -n -m1 'writeb_relaxed(\*s++' <<< "$wr" | cut -d: -f1)
+          if [ -z "$line_size" ] || [ -z "$line_start" ] || [ -z "$line_pay" ] ||
+             [ "$line_size" -gt "$line_start" ] || [ "$line_start" -gt "$line_pay" ]; then
+            echo '::error::earlycon_ramoops_write() must write size, then start, then the payload -- any other order leaves start > size across a reset, and the 4.14 recovery reader zaps a buffer it calls invalid'
+            exit 1
+          fi
+          # The earlycon is the log path, and two of its properties are not
+          # cosmetic: it must append to a surviving ring instead of resetting it
+          # (this device has no separate recovery kernel, so a reset at setup
+          # wipes the boot under test before the reader can copy it), and it must
+          # name the build it belongs to.  Both were earned with flash rounds.
+          early=$GITHUB_WORKSPACE/drivers/tty/serial/earlycon-ramoops.c
+          if ! grep -q 'readl_relaxed(&rbuf->sig) != PERSISTENT_RAM_SIG' "$early"; then
+            echo "::error::earlycon-ramoops.c must keep the previous boot's ring, resetting only a foreign or torn header"
+            exit 1
+          fi
+          if ! grep -q 'surya earlycon, new boot: ' "$early"; then
+            echo '::error::the earlycon must mark each boot with the banner, or an accumulated ring cannot be split per boot'
+            exit 1
+          fi
+          kernel_id=$(gzip -cd Image.gz 2>/dev/null | strings -a | grep -m1 -o 'Linux version 6\.1\.177-surya-g[0-9a-f]*' || true)
+          # A pull_request run builds refs/pull/N/merge, so the -g<sha> the kernel
+          # prints is that merge commit, not the branch head.  Print both: the
+          # 2026-11-27 report's "ga5684c8d8572" is merge commit a5684c8d85722e6e
+          # (head b2529a124 + base 4ae872acf) and looked, for a minute, like a
+          # wrong zip.  The head sha below is what a report has to be matched to.
+          printf '%s\n' "${kernel_id:-Linux version unknown}" > SURYA-VERSION
+          # Deliberately no Actions expression on these lines: this run block
+          # is large and an expression inside it is rejected past its length
+          # limit.  A pull_request run checks out refs/pull/N/merge, whose SECOND
+          # parent is the branch head (checked here on 2026-11-28: merge commit
+          # b19085e465ec lists parent 4ae872acf = the base, then f9dab5026 = the
+          # head) -- that head is the sha a report has to be matched to, while a
+          # push run has already checked the head out directly.
+          # -C "$GITHUB_WORKSPACE" and the fallback are both load-bearing: this
+          # cwd is a temp directory that is not a repository, so a bare git call
+          # exits 128 -- which, under the step's set -e, killed a finished build
+          # over a stamp line (the 2026-11-28 04:0x run).  A stamp must never be
+          # able to break a build, so every failure path lands on $GITHUB_SHA.
+          if [ "$(git -C "$GITHUB_WORKSPACE" rev-list --parents -n1 HEAD | wc -w)" -gt 2 ]; then
+            stamp_kind=pull-request-merge
+            # HEAD^2 names the branch head, but a fetch-depth:1 checkout cannot
+            # resolve it, and $GITHUB_SHA is the MERGE sha -- the wrong answer,
+            # because the kernel banner is that same merge sha and cannot tell a
+            # round apart.  The 2026-11-28 capture's head= line named
+            # 6e6ae27fdc3b (the merge of a9b76bd5d) and cost two rounds of
+            # "is this even the build I flashed".  A merge commit's subject line
+            # holds the branch head and lives in HEAD's own object, so fall back
+            # to parsing it; `# stamp=` records which case produced the value.
+            head_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse -q --verify 'HEAD^2' 2>/dev/null \
+              || git -C "$GITHUB_WORKSPACE" log -1 --format=%s HEAD | \
+                   sed -n 's/^Merge \([0-9a-f]\{40\}\) into .*/\1/p')
+            if [ -z "$head_sha" ]; then
+              head_sha="$GITHUB_SHA"
+              stamp_kind=pull-request-merge-unresolved
+            elif [ "$head_sha" = "$GITHUB_SHA" ]; then
+              stamp_kind=pull-request-merge-same-as-merge
+            fi
+          else
+            head_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD 2>/dev/null || echo "$GITHUB_SHA")
+            stamp_kind=checkout
+          fi
+          printf 'head=%s\n# stamp=%s\n' "$head_sha" "$stamp_kind" >> SURYA-VERSION
+          sha256sum Image.gz dtb dtbo.img > SURYA-SHA256SUMS
+          sh -n anykernel.sh
+          if ! grep -q 'SURYA-VERSION' anykernel.sh; then
+            echo '::error::the flashable installer must ui_print the kernel build stamp, or a report cannot name its own build'
+            exit 1
+          fi
+          zip -q -r "$RUNNER_TEMP/Surya-6.1-TWRP-BOOT-TEST-RAMOOPS.zip" META-INF tools LICENSE anykernel.sh Image.gz dtb dtbo.img SURYA-SHA256SUMS SURYA-VERSION
+          unzip -tq "$RUNNER_TEMP/Surya-6.1-TWRP-BOOT-TEST-RAMOOPS.zip"
+      - uses: actions/upload-artifact@v4
+        if: contains(github.event.pull_request.labels.*.name, 'surya-twrp-test')
+        with:
+          name: Surya-6.1-TWRP-DIAGNOSTIC-NO-WRITE
+          path: ${{ runner.temp }}/Surya-6.1-TWRP-DIAGNOSTIC-NO-WRITE.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: contains(github.event.pull_request.labels.*.name, 'surya-twrp-test')
+        with:
+          name: Surya-6.1-TWRP-BOOT-TEST-RAMOOPS
+          path: ${{ runner.temp }}/Surya-6.1-TWRP-BOOT-TEST-RAMOOPS.zip
+          if-no-files-found: error
+          retention-days: 7
+      - name: Package the pstore log collector
+        # Same rule as the two zips above: only built for a labelled test PR.
+        # It exists in CI because the collector had been a hand-built artifact, so
+        # a round could not say which script had copied the prz -- and decoding a
+        # capture without knowing its reader is how capture 14 got read as "the
+        # kernel printed nothing".  The stamp file is the answer to that.
+        if: contains(github.event.pull_request.labels.*.name, 'surya-twrp-test')
+        run: |
+          set -e
+          work=$(mktemp -d)
+          trap 'rm -rf -- "$work"' EXIT
+          pin=41f04bdb4ee30a44e429c2c1131d5e8bb32b15f1
+          curl -fsSL --retry 2 "https://codeload.github.com/osm0sis/AnyKernel3/tar.gz/$pin" -o "$work/ak3.tar.gz"
+          mkdir "$work/installer"
+          tar -xzf "$work/ak3.tar.gz" -C "$work/installer" --strip-components=1
+          cd "$work/installer"
+          # Every path below is anchored: this cwd is a temp directory that is not
+          # the repository, so a relative tools/... would copy nothing and zip an
+          # empty installer instead of a collector (the rule scripts/dtc/surya-workflow-lint.py
+          # now enforces across this job).
+          cp "$GITHUB_WORKSPACE/tools/surya-anykernel/collect-logs.sh" anykernel.sh
+          sh -n anykernel.sh
+          for want in 'pmsg-ramoops-*' 'pstore-index.txt' 'console-ramoops-*'; do
+            if ! grep -q -- "$want" anykernel.sh; then
+              echo "::error::the collector must handle $want"
+              echo '::error::pmsg is the only prz the boot under test writes alone; the index is what tells a compressed prz from a silent boot (Documentation/arm64/surya-bringup.rst)'
+              exit 1
+            fi
+          done
+          if [ "$(git -C "$GITHUB_WORKSPACE" rev-list --parents -n1 HEAD | wc -w)" -gt 2 ]; then
+            stamp_kind=pull-request-merge
+            # HEAD^2 names the branch head, but a fetch-depth:1 checkout cannot
+            # resolve it, and $GITHUB_SHA is the MERGE sha -- the wrong answer,
+            # because the kernel banner is that same merge sha and cannot tell a
+            # round apart.  The 2026-11-28 capture's head= line named
+            # 6e6ae27fdc3b (the merge of a9b76bd5d) and cost two rounds of
+            # "is this even the build I flashed".  A merge commit's subject line
+            # holds the branch head and lives in HEAD's own object, so fall back
+            # to parsing it; `# stamp=` records which case produced the value.
+            head_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse -q --verify 'HEAD^2' 2>/dev/null \
+              || git -C "$GITHUB_WORKSPACE" log -1 --format=%s HEAD | \
+                   sed -n 's/^Merge \([0-9a-f]\{40\}\) into .*/\1/p')
+            if [ -z "$head_sha" ]; then
+              head_sha="$GITHUB_SHA"
+              stamp_kind=pull-request-merge-unresolved
+            elif [ "$head_sha" = "$GITHUB_SHA" ]; then
+              stamp_kind=pull-request-merge-same-as-merge
+            fi
+          else
+            head_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD 2>/dev/null || echo "$GITHUB_SHA")
+            stamp_kind=checkout
+          fi
+          printf 'collector=head=%s\n# stamp=%s\n' "$head_sha" "$stamp_kind" > SURYA-VERSION
+          sha256sum anykernel.sh > SURYA-SHA256SUMS
+          zip -q -r "$RUNNER_TEMP/Surya-6.1-TWRP-LOG-COLLECTOR.zip" META-INF tools LICENSE anykernel.sh SURYA-SHA256SUMS SURYA-VERSION
+          unzip -tq "$RUNNER_TEMP/Surya-6.1-TWRP-LOG-COLLECTOR.zip"
+      - uses: actions/upload-artifact@v4
+        if: contains(github.event.pull_request.labels.*.name, 'surya-twrp-test')
+        with:
+          name: Surya-6.1-TWRP-LOG-COLLECTOR
+          path: ${{ runner.temp }}/Surya-6.1-TWRP-LOG-COLLECTOR.zip
+          if-no-files-found: error
+          retention-days: 7
+      - name: Report compiler cache statistics
+        if: always()
+        run: ccache --show-stats

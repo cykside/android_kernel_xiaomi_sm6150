@@ -14,6 +14,7 @@
 #include <linux/platform_device.h>
 #include <linux/phy/phy.h>
 #include <linux/gpio/consumer.h>
+#include <linux/pinctrl/consumer.h>
 #include <linux/reset-controller.h>
 #include <linux/interconnect.h>
 #include <linux/phy/phy-qcom-ufs.h>
@@ -788,14 +789,16 @@ static int ufs_qcom_host_reset(struct ufs_hba *hba)
 	}
 
 	reenable_intr = hba->is_irq_enabled;
-	disable_irq(hba->irq);
-	hba->is_irq_enabled = false;
+	if (reenable_intr) {
+		disable_irq(hba->irq);
+		hba->is_irq_enabled = false;
+	}
 
 	ret = reset_control_assert(host->core_reset);
 	if (ret) {
 		dev_err(hba->dev, "%s: core_reset assert failed, err = %d\n",
 				 __func__, ret);
-		goto out;
+		goto out_restore_irq;
 	}
 
 	/*
@@ -819,6 +822,7 @@ static int ufs_qcom_host_reset(struct ufs_hba *hba)
 	 */
 	ufs_qcom_ice_disable(host);
 
+out_restore_irq:
 	if (reenable_intr) {
 		enable_irq(hba->irq);
 		hba->is_irq_enabled = true;
@@ -1004,7 +1008,9 @@ static int ufs_qcom_hce_enable_notify(struct ufs_hba *hba,
 	switch (status) {
 	case PRE_CHANGE:
 		ufs_qcom_force_mem_config(hba);
-		ufs_qcom_power_up_sequence(hba);
+		err = ufs_qcom_power_up_sequence(hba);
+		if (err)
+			break;
 		/*
 		 * The PHY PLL output is the source of tx/rx lane symbol
 		 * clocks, hence, enable the lane clocks only after PHY
@@ -1772,15 +1778,54 @@ static int remove_group_qos(struct qos_cpu_group *qcg)
 	return 0;
 }
 
-static void ufs_qcom_device_reset_ctrl(struct ufs_hba *hba, bool asserted)
+static int ufs_qcom_device_reset_ctrl(struct ufs_hba *hba, bool asserted)
 {
 	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
 
-	/* reset gpio is optional */
-	if (!host->device_reset)
-		return;
+	if (host->device_reset)
+		gpiod_set_value_cansleep(host->device_reset, asserted);
+	else if (host->reset_pinctrl)
+		return pinctrl_select_state(host->reset_pinctrl, asserted ?
+				host->reset_assert : host->reset_deassert);
 
-	gpiod_set_value_cansleep(host->device_reset, asserted);
+	return 0;
+}
+
+static int ufs_qcom_init_reset_pinctrl(struct ufs_hba *hba)
+{
+	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+	struct device *dev = hba->dev;
+	int ret;
+
+	if (host->device_reset || !dev->of_node ||
+	    (of_property_match_string(dev->of_node, "pinctrl-names",
+				      "dev-reset-assert") < 0 &&
+	     of_property_match_string(dev->of_node, "pinctrl-names",
+				      "dev-reset-deassert") < 0))
+		return 0;
+
+	host->reset_pinctrl = devm_pinctrl_get(dev);
+	if (IS_ERR(host->reset_pinctrl))
+		return dev_err_probe(dev, PTR_ERR(host->reset_pinctrl),
+				     "failed to acquire reset pinctrl\n");
+
+	host->reset_assert = pinctrl_lookup_state(host->reset_pinctrl,
+						 "dev-reset-assert");
+	if (IS_ERR(host->reset_assert))
+		return dev_err_probe(dev, PTR_ERR(host->reset_assert),
+				     "missing reset assert state\n");
+
+	host->reset_deassert = pinctrl_lookup_state(host->reset_pinctrl,
+						   "dev-reset-deassert");
+	if (IS_ERR(host->reset_deassert))
+		return dev_err_probe(dev, PTR_ERR(host->reset_deassert),
+				     "missing reset deassert state\n");
+
+	ret = ufs_qcom_device_reset_ctrl(hba, true);
+	if (ret)
+		return dev_err_probe(dev, ret, "failed to assert device reset\n");
+
+	return 0;
 }
 
 static int ufs_qcom_suspend(struct ufs_hba *hba, enum ufs_pm_op pm_op,
@@ -1808,8 +1853,8 @@ static int ufs_qcom_suspend(struct ufs_hba *hba, enum ufs_pm_op pm_op,
 			err = ufs_qcom_unvote_qos_all(hba);
 	}
 
-	if (!err && ufs_qcom_is_link_off(hba) && host->device_reset)
-		ufs_qcom_device_reset_ctrl(hba, true);
+	if (!err && ufs_qcom_is_link_off(hba))
+		err = ufs_qcom_device_reset_ctrl(hba, true);
 
 	ufs_qcom_log_str(host, "&,%d,%d,%d,%d,%d,%d\n",
 			pm_op, hba->rpm_lvl, hba->spm_lvl, hba->uic_link_state,
@@ -2034,7 +2079,7 @@ static int ufs_qcom_set_bus_vote(struct ufs_hba *hba, bool on)
 	if (on) {
 		vote = host->bus_vote.saved_vote;
 		if (vote == host->bus_vote.min_bw_vote)
-			ufs_qcom_update_bus_bw_vote(host);
+			return ufs_qcom_update_bus_bw_vote(host);
 	} else {
 		vote = host->bus_vote.min_bw_vote;
 	}
@@ -2184,7 +2229,6 @@ static void ufs_qcom_enable_crash_on_err(struct ufs_hba *hba)
 
 static int ufs_qcom_bus_register(struct ufs_qcom_host *host)
 {
-	int err = 0;
 	struct device *dev = host->hba->dev;
 	struct qcom_bus_scale_data *qsd;
 
@@ -2195,23 +2239,30 @@ static int ufs_qcom_bus_register(struct ufs_qcom_host *host)
 	}
 	host->qbsd = qsd;
 
-	qsd->ufs_ddr = of_icc_get(dev, UFS_DDR);
-	if (IS_ERR(qsd->ufs_ddr)) {
-		dev_err(dev, "Error: (%d) failed getting %s path\n",
-			PTR_ERR(qsd->ufs_ddr), UFS_DDR);
-		return PTR_ERR(qsd->ufs_ddr);
-	}
+	qsd->ufs_ddr = devm_of_icc_get(dev, UFS_DDR);
+	if (IS_ERR(qsd->ufs_ddr))
+		return dev_err_probe(dev, PTR_ERR(qsd->ufs_ddr),
+				     "failed getting %s path\n", UFS_DDR);
 
-	qsd->cpu_ufs = of_icc_get(dev, CPU_UFS);
-	if (IS_ERR(qsd->cpu_ufs)) {
-		dev_err(dev, "Error: (%d) failed getting %s path\n",
-			PTR_ERR(qsd->cpu_ufs), CPU_UFS);
-		return PTR_ERR(qsd->cpu_ufs);
-	}
+	qsd->cpu_ufs = devm_of_icc_get(dev, CPU_UFS);
+	if (IS_ERR(qsd->cpu_ufs))
+		return dev_err_probe(dev, PTR_ERR(qsd->cpu_ufs),
+				     "failed getting %s path\n", CPU_UFS);
 
 	/* cache the vote index for minimum and maximum bandwidth */
 	host->bus_vote.min_bw_vote = ufs_qcom_get_bus_vote(host, "MIN");
 	host->bus_vote.max_bw_vote = ufs_qcom_get_bus_vote(host, "MAX");
+
+	return 0;
+}
+
+static void ufs_qcom_bus_init_sysfs(struct ufs_qcom_host *host)
+{
+	struct device *dev = host->hba->dev;
+	int err;
+
+	if (!host->qbsd)
+		return;
 
 	host->bus_vote.max_bus_bw.show = show_ufs_to_mem_max_bus_bw;
 	host->bus_vote.max_bus_bw.store = store_ufs_to_mem_max_bus_bw;
@@ -2219,10 +2270,10 @@ static int ufs_qcom_bus_register(struct ufs_qcom_host *host)
 	host->bus_vote.max_bus_bw.attr.name = "max_bus_bw";
 	host->bus_vote.max_bus_bw.attr.mode = 0644;
 	err = device_create_file(dev, &host->bus_vote.max_bus_bw);
-	if (err)
-		dev_err(dev, "Error: (%d) Failed to create sysfs entries\n",
-			err);
-	return 0;
+	if (err) {
+		host->bus_vote.max_bus_bw.attr.name = NULL;
+		dev_err(dev, "Error: (%d) Failed to create sysfs entries\n", err);
+	}
 }
 
 static void ufs_qcom_dev_ref_clk_ctrl(struct ufs_qcom_host *host, bool enable)
@@ -3819,6 +3870,10 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 		goto out_variant_clear;
 	}
 
+	err = ufs_qcom_init_reset_pinctrl(hba);
+	if (err)
+		goto out_variant_clear;
+
 	err = ufs_qcom_bus_register(host);
 	if (err)
 		goto out_variant_clear;
@@ -3844,8 +3899,14 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 		goto out_variant_clear;
 	}
 
-	err = ufs_qcom_parse_reg_info(host, "qcom,vddp-ref-clk",
-				      &host->vddp_ref_clk);
+	if (of_property_read_bool(dev->of_node, "qcom,vddp-ref-clk-supply")) {
+		err = ufs_qcom_parse_reg_info(host, "qcom,vddp-ref-clk",
+					      &host->vddp_ref_clk);
+		if (err) {
+			dev_err_probe(dev, err, "failed to get UFS reference clock supply\n");
+			goto out_variant_clear;
+		}
+	}
 
 	err = phy_init(host->generic_phy);
 	if (err) {
@@ -3979,6 +4040,7 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 			dev_err(host->hba->dev, "Fail to register UFS panic notifier\n");
 	}
 
+	ufs_qcom_bus_init_sysfs(host);
 	return 0;
 
 out_disable_parent_vreg:
@@ -3998,6 +4060,9 @@ out_variant_clear:
 static void ufs_qcom_exit(struct ufs_hba *hba)
 {
 	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+
+	if (host->bus_vote.max_bus_bw.attr.name)
+		device_remove_file(hba->dev, &host->bus_vote.max_bus_bw);
 
 	ufs_qcom_disable_lane_clks(host);
 	ufs_qcom_phy_power_off(hba);
@@ -5010,18 +5075,22 @@ static int ufs_qcom_device_reset(struct ufs_hba *hba)
 		dev_warn(hba->dev, "%s: host reset returned %d\n",
 				 __func__, ret);
 
-	/* reset gpio is optional */
-	if (!host->device_reset)
+	/* Device reset is optional. */
+	if (!host->device_reset && !host->reset_pinctrl)
 		return -EOPNOTSUPP;
 
 	/*
 	 * The UFS device shall detect reset pulses of 1us, sleep for 10us to
 	 * be on the safe side.
 	 */
-	ufs_qcom_device_reset_ctrl(hba, true);
+	ret = ufs_qcom_device_reset_ctrl(hba, true);
+	if (ret)
+		return ret;
 	usleep_range(10, 15);
 
-	ufs_qcom_device_reset_ctrl(hba, false);
+	ret = ufs_qcom_device_reset_ctrl(hba, false);
+	if (ret)
+		return ret;
 	usleep_range(10, 15);
 
 	return 0;
@@ -6112,8 +6181,8 @@ static void ufs_qcom_shutdown(struct platform_device *pdev)
 	 * reset, so deassert ufs device reset line after UFS device shutdown
 	 * to ensure the UFS_RESET TLMM register value is POR value
 	 */
-	if (!host->bypass_pbl_rst_wa)
-		ufs_qcom_device_reset_ctrl(hba, false);
+	if (!host->bypass_pbl_rst_wa && ufs_qcom_device_reset_ctrl(hba, false))
+		dev_warn(hba->dev, "failed to deassert device reset at shutdown\n");
 }
 
 static int ufs_qcom_system_suspend(struct device *dev)

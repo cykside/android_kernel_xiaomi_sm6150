@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/* CI fixture only: do not boot or flash this unvalidated wiring. */
+#include "surya-sm6150-cmd-db-test.dts"
+
+&ufsphy_mem {
+	status = "okay";
+};
+
+&ufshc_mem {
+	status = "okay";
+};

@@ -1,0 +1,514 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Portions from the 4.14 pm6150.dtsi:
+ * Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2020 XiaoMi, Inc.
+ */
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/spmi/spmi.h>
+#include <dt-bindings/iio/qcom,spmi-vadc.h>
+#include <dt-bindings/iio/qti_power_supply_iio.h>
+
+&spmi_bus {
+	pmic@0 {
+		compatible = "qcom,pm6150", "qcom,spmi-pmic";
+		reg = <0x0 SPMI_USID>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		pm6150_vadc: adc@3100 {
+			compatible = "qcom,spmi-adc5";
+			reg = <0x3100>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			#io-channel-cells = <1>;
+			interrupts = <0x0 0x31 0x0 IRQ_TYPE_EDGE_RISING>;
+			interrupt-names = "eoc-int-en-set";
+			status = "disabled";
+
+			channel@8 {
+				reg = <ADC5_USB_IN_V_16>;
+				label = "usb_in_voltage";
+				qcom,pre-scaling = <1 16>;
+			};
+
+			channel@7 {
+				reg = <ADC5_USB_IN_I>;
+				label = "usb_in_current";
+				qcom,pre-scaling = <1 1>;
+			};
+
+			channel@9 {
+				reg = <ADC5_CHG_TEMP>;
+				label = "chg_temp";
+				qcom,pre-scaling = <1 1>;
+			};
+
+			channel@6 {
+				reg = <ADC5_DIE_TEMP>;
+				label = "die_temp";
+				qcom,pre-scaling = <1 1>;
+			};
+
+			channel@99 {
+				reg = <ADC5_SBUx>;
+				label = "sbux_res";
+				qcom,pre-scaling = <1 3>;
+			};
+
+			channel@83 {
+				reg = <ADC5_VPH_PWR>;
+				label = "vph_voltage",
+					   "resistance_id",
+					      "voltage_now",
+					      "temp",
+					      "capacity",
+					      "voltage_ocv",
+					      "voltage_avg",
+					      "debug_battery",
+					      "real_capacity",
+					      "cc_soc",
+					      "current_now",
+					      "voltage_max",
+					      "charge_full",
+					      "charge_counter",
+					      "cycle_count",
+					      "charge_full_design",
+					      "time_to_full_now";
+				qcom,pre-scaling = <1 3>;
+			};
+
+			channel@4a {
+				reg = <ADC5_BAT_THERM_100K_PU>;
+				label = "bat_therm";
+				qcom,ratiometric;
+				qcom,hw-settle-time = <200>;
+				qcom,pre-scaling = <1 1>;
+			};
+
+			channel@4b {
+				reg = <ADC5_BAT_ID_100K_PU>;
+				label = "bat_id";
+				qcom,ratiometric;
+				qcom,hw-settle-time = <200>;
+				qcom,pre-scaling = <1 1>;
+			};
+		};
+
+		/* Charging policy is pending hardware validation. */
+		pm6150_charger: charger {
+			compatible = "qcom,pm6150-smb5";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			#io-channel-cells = <1>;
+			status = "disabled";
+
+			io-channels = <&pm6150_vadc ADC5_USB_IN_V_16>,
+				      <&pm6150_vadc ADC5_USB_IN_I>,
+				      <&pm6150_vadc ADC5_CHG_TEMP>,
+				      <&pm6150_vadc ADC5_DIE_TEMP>,
+				      <&pm6150l_vadc ADC5_AMUX_THM1_100K_PU>,
+				      <&pm6150_vadc ADC5_SBUx>,
+				      <&pm6150_vadc ADC5_VPH_PWR>,
+				      <&pm6150_qg PSY_IIO_RESISTANCE_ID>,
+				      <&pm6150_qg PSY_IIO_VOLTAGE_NOW>,
+				      <&pm6150_qg PSY_IIO_TEMP>,
+				      <&pm6150_qg PSY_IIO_CAPACITY>,
+				      <&pm6150_qg PSY_IIO_VOLTAGE_OCV>,
+				      <&pm6150_qg PSY_IIO_VOLTAGE_AVG>,
+				      <&pm6150_qg PSY_IIO_DEBUG_BATTERY>,
+				      <&pm6150_qg PSY_IIO_REAL_CAPACITY>,
+				      <&pm6150_qg PSY_IIO_CC_SOC>,
+				      <&pm6150_qg PSY_IIO_CURRENT_NOW>,
+				      <&pm6150_qg PSY_IIO_VOLTAGE_MAX>,
+				      <&pm6150_qg PSY_IIO_CHARGE_FULL>,
+				      <&pm6150_qg PSY_IIO_CHARGE_COUNTER>,
+				      <&pm6150_qg PSY_IIO_CYCLE_COUNT>,
+				      <&pm6150_qg PSY_IIO_CHARGE_FULL_DESIGN>,
+				      <&pm6150_qg PSY_IIO_TIME_TO_FULL_NOW>;
+			io-channel-names = "usb_in_voltage", "usb_in_current",
+					   "chg_temp", "die_temp", "conn_temp", "sbux_res",
+					   "vph_voltage",
+					   "resistance_id",
+					      "voltage_now",
+					      "temp",
+					      "capacity",
+					      "voltage_ocv",
+					      "voltage_avg",
+					      "debug_battery",
+					      "real_capacity",
+					      "cc_soc",
+					      "current_now",
+					      "voltage_max",
+					      "charge_full",
+					      "charge_counter",
+					      "cycle_count",
+					      "charge_full_design",
+					      "time_to_full_now";
+
+			/* Surya 4.14 tables supported by the 6.1 SMB5 driver. */
+			qcom,thermal-mitigation = <6000000 5500000 4900000 4600000 4500000 4400000
+				4200000 3800000 3800000 3600000 3400000 3200000
+				3000000 2200000 800000 700000>;
+			qcom,thermal-mitigation-icl = <3000000 3000000 3000000 2400000 2200000 2100000
+				2000000 2000000 2000000 1900000 1800000 1600000
+				1500000 1300000 1300000 750000>;
+			qcom,thermal-mitigation-dcp = <1800000 1800000 1800000 1800000 1800000 1800000
+				1800000 1800000 1800000 1700000 1600000 1400000
+				1200000 1100000 1100000 1000000>;
+			qcom,thermal-mitigation-qc2 = <1500000 1500000 1500000 1500000 1450000 1400000
+				1350000 1300000 1150000 1100000 1000000 900000
+				850000 750000 650000 500000>;
+			qcom,thermal-fcc-qc3-normal = <6000000 5000000 4500000 4000000 3500000 3000000
+				2900000 2800000 2700000 2600000 2400000 2200000
+				2000000 2000000 750000 700000>;
+			qcom,thermal-mitigation-pd-base = <6000000 5000000 4500000 4000000 3400000 3300000
+				3200000 3100000 3000000 2800000 2600000 2400000
+				2200000 2000000 1000000 700000>;
+
+			qcom,chgr@1000 {
+				reg = <0x1000>;
+				interrupts =
+					<0x0 0x10 0x0 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x10 0x1 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x10 0x2 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x10 0x3 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x10 0x4 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x10 0x5 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x10 0x6 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x10 0x7 IRQ_TYPE_EDGE_RISING>;
+
+				interrupt-names = "chgr-error",
+						  "chg-state-change",
+						  "step-chg-state-change",
+						  "step-chg-soc-update-fail",
+						  "step-chg-soc-update-req",
+						  "fg-fvcal-qualified",
+						  "vph-alarm",
+						  "vph-drop-prechg";
+			};
+
+			qcom,dcdc@1100 {
+				reg = <0x1100>;
+				interrupts =
+					<0x0 0x11 0x0 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x11 0x1 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x11 0x2 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x11 0x3 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x11 0x4 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x11 0x5 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x11 0x6 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x11 0x7 IRQ_TYPE_EDGE_BOTH>;
+
+				interrupt-names = "otg-fail",
+						  "otg-oc-disable-sw",
+						  "otg-oc-hiccup",
+						  "bsm-active",
+						  "high-duty-cycle",
+						  "input-current-limiting",
+						  "concurrent-mode-disable",
+						  "switcher-power-ok";
+			};
+
+			qcom,batif@1200 {
+				reg = <0x1200>;
+				interrupts =
+					<0x0 0x12 0x0 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x12 0x2 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x12 0x3 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x12 0x4 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x12 0x5 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x12 0x6 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x12 0x7 IRQ_TYPE_EDGE_BOTH>;
+
+				interrupt-names = "bat-temp",
+						  "bat-ov",
+						  "bat-low",
+						  "bat-therm-or-id-missing",
+						  "bat-terminal-missing",
+						  "buck-oc",
+						  "vph-ov";
+			};
+
+			qcom,usb@1300 {
+				reg = <0x1300>;
+				interrupts =
+					<0x0 0x13 0x0 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x13 0x1 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x13 0x2 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x13 0x3 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x13 0x4 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x13 0x5 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x13 0x6 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x13 0x7 IRQ_TYPE_EDGE_RISING>;
+
+				interrupt-names = "usbin-collapse",
+						  "usbin-vashdn",
+						  "usbin-uv",
+						  "usbin-ov",
+						  "usbin-plugin",
+						  "usbin-revi-change",
+						  "usbin-src-change",
+						  "usbin-icl-change";
+			};
+
+			qcom,dc@1400 {
+				reg = <0x1400>;
+				interrupts =
+					<0x0 0x14 0x1 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x14 0x2 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x14 0x3 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x14 0x4 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x14 0x5 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x14 0x6 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x14 0x7 IRQ_TYPE_EDGE_RISING>;
+
+				interrupt-names = "dcin-vashdn",
+						  "dcin-uv",
+						  "dcin-ov",
+						  "dcin-plugin",
+						  "dcin-revi",
+						  "dcin-pon",
+						  "dcin-en";
+			};
+
+			qcom,typec@1500 {
+				reg = <0x1500>;
+				interrupts =
+					<0x0 0x15 0x0 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x15 0x1 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x15 0x2 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x15 0x3 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x15 0x4 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x15 0x5 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x15 0x6 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x15 0x7 IRQ_TYPE_EDGE_RISING>;
+
+				interrupt-names = "typec-or-rid-detect-change",
+						  "typec-vpd-detect",
+						  "typec-cc-state-change",
+						  "typec-vconn-oc",
+						  "typec-vbus-change",
+						  "typec-attach-detach",
+						  "typec-legacy-cable-detect",
+						  "typec-try-snk-src-detect";
+			};
+
+			qcom,misc@1600 {
+				reg = <0x1600>;
+				interrupts =
+					<0x0 0x16 0x0 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x16 0x1 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x16 0x2 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x16 0x3 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x16 0x4 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x16 0x5 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x16 0x6 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x16 0x7 IRQ_TYPE_EDGE_RISING>;
+
+				interrupt-names = "wdog-snarl",
+						  "wdog-bark",
+						  "aicl-fail",
+						  "aicl-done",
+						  "smb-en",
+						  "imp-trigger",
+						  "temp-change",
+						  "temp-change-smb";
+			};
+
+			qcom,sdam@b100 {
+				reg = <0xb100>;
+				interrupts =
+					<0x0 0xb1 0x1 IRQ_TYPE_EDGE_RISING>;
+				interrupt-names = "sdam-sts";
+			};
+
+			smb5_vbus: qcom,smb5-vbus {
+				regulator-name = "smb5-vbus";
+			};
+
+			smb5_vconn: qcom,smb5-vconn {
+				regulator-name = "smb5-vconn";
+			};
+		};
+
+		/* Register and IRQ layout from 4.14 pm6150.dtsi. */
+		pm6150_pdphy: usb-pdphy@1700 {
+			compatible = "qcom,qpnp-pdphy";
+			reg = <0x1700>;
+			vdd-pdphy-supply = <&pm6150_l17>;
+			interrupts = <0x0 0x17 0x0 IRQ_TYPE_EDGE_RISING>,
+				     <0x0 0x17 0x1 IRQ_TYPE_EDGE_RISING>,
+				     <0x0 0x17 0x2 IRQ_TYPE_EDGE_RISING>,
+				     <0x0 0x17 0x3 IRQ_TYPE_EDGE_RISING>,
+				     <0x0 0x17 0x4 IRQ_TYPE_EDGE_RISING>,
+				     <0x0 0x17 0x5 IRQ_TYPE_EDGE_RISING>,
+				     <0x0 0x17 0x6 IRQ_TYPE_EDGE_RISING>,
+				     <0x0 0x17 0x7 IRQ_TYPE_EDGE_RISING>;
+			interrupt-names = "sig-tx", "sig-rx", "msg-tx", "msg-rx",
+					  "msg-tx-failed", "msg-tx-discarded",
+					  "msg-rx-discarded", "fr-swap";
+			vbus-supply = <&smb5_vbus>;
+			vconn-supply = <&smb5_vconn>;
+			io-channels = <&pm6150_charger PSY_IIO_PD_ACTIVE>,
+				      <&pm6150_charger PSY_IIO_TYPEC_CC_ORIENTATION>,
+				      <&pm6150_charger PSY_IIO_CONNECTOR_TYPE>,
+				      <&pm6150_charger PSY_IIO_TYPEC_POWER_ROLE>,
+				      <&pm6150_charger PSY_IIO_PD_USB_SUSPEND_SUPPORTED>,
+				      <&pm6150_charger PSY_IIO_TYPEC_SRC_RP>,
+				      <&pm6150_charger PSY_IIO_PD_IN_HARD_RESET>,
+				      <&pm6150_charger PSY_IIO_PD_CURRENT_MAX>,
+				      <&pm6150_charger PSY_IIO_PR_SWAP>,
+				      <&pm6150_charger PSY_IIO_PD_VOLTAGE_MIN>,
+				      <&pm6150_charger PSY_IIO_PD_VOLTAGE_MAX>,
+				      <&pm6150_charger PSY_IIO_USB_REAL_TYPE>,
+				      <&pm6150_charger PSY_IIO_TYPEC_MODE>,
+				      <&pm6150_charger PSY_IIO_PE_START>;
+			io-channel-names = "pd_active",
+					   "typec_cc_orientation",
+					   "connector_type",
+					   "typec_power_role",
+					   "pd_usb_suspend_supported",
+					   "typec_src_rp",
+					   "pd_in_hard_reset",
+					   "pr_current_max",
+					   "pr_swap",
+					   "pd_voltage_min",
+					   "pd_voltage_max",
+					   "real_type",
+					   "typec_mode",
+					   "pe_start";
+			/* Do not probe until the charger policy is validated. */
+			status = "disabled";
+		};
+
+		/* No battery profile is selected until pack identification is verified. */
+		pm6150_qg: fuel-gauge {
+			compatible = "qcom,pm6150-qg";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			#io-channel-cells = <1>;
+			io-channels = <&pm6150_vadc ADC5_BAT_THERM_100K_PU>,
+				      <&pm6150_vadc ADC5_BAT_ID_100K_PU>,
+				      <&pm6150_charger PSY_IIO_INPUT_CURRENT_LIMITED>,
+				      <&pm6150_charger PSY_IIO_RECHARGE_SOC>,
+				      <&pm6150_charger PSY_IIO_FORCE_RECHARGE>,
+				      <&pm6150_charger PSY_IIO_CHARGE_DONE>;
+			io-channel-names = "batt-therm", "batt-id",
+					   "input_current_limited", "recharge_soc",
+					   "force_recharge", "charge_done";
+			status = "disabled";
+
+			qcom,qgauge@4800 {
+				reg = <0x4800>;
+				interrupts =
+					<0x0 0x48 0x0 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x48 0x1 IRQ_TYPE_EDGE_BOTH>,
+					<0x0 0x48 0x2 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x48 0x3 IRQ_TYPE_EDGE_RISING>,
+					<0x0 0x48 0x4 IRQ_TYPE_EDGE_RISING>;
+				interrupt-names = "qg-batt-missing",
+						  "qg-vbat-low",
+						  "qg-vbat-empty",
+						  "qg-fifo-done",
+						  "qg-good-ocv";
+			};
+
+			qcom,qg-sdam@b600 {
+				reg = <0xb600>;
+			};
+		};
+	};
+
+	pmic@4 {
+		compatible = "qcom,pm6150l", "qcom,spmi-pmic";
+		reg = <0x4 SPMI_USID>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		pm6150l_gpios: pinctrl@c000 {
+			compatible = "qcom,pm6150l-gpio";
+			reg = <0xc000>;
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+			status = "disabled";
+		};
+
+		pm6150l_vadc: adc@3100 {
+			compatible = "qcom,spmi-adc5";
+			reg = <0x3100>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			#io-channel-cells = <1>;
+			interrupts = <0x4 0x31 0x0 IRQ_TYPE_EDGE_RISING>;
+			interrupt-names = "eoc-int-en-set";
+			status = "disabled";
+
+			/* 4.14 ADC_AMUX_THM1_PU2 uses the same channel ID. */
+			channel@4d {
+				reg = <ADC5_AMUX_THM1_100K_PU>;
+				label = "conn_therm";
+				qcom,ratiometric;
+				qcom,hw-settle-time = <200>;
+				qcom,pre-scaling = <1 1>;
+			};
+		};
+	};
+
+	pmic@5 {
+		compatible = "qcom,pm6150l", "qcom,spmi-pmic";
+		reg = <0x5 SPMI_USID>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		pm6150l_wled: qcom,wled@d800 {
+			compatible = "qcom,pm6150l-spmi-wled";
+			reg = <0xd800>, <0xd900>;
+			reg-names = "wled-ctrl-base", "wled-sink-base";
+			label = "backlight";
+			interrupts = <0x5 0xd8 0x1 IRQ_TYPE_EDGE_RISING>,
+				     <0x5 0xd8 0x4 IRQ_TYPE_EDGE_BOTH>,
+				     <0x5 0xd8 0x5 IRQ_TYPE_EDGE_BOTH>;
+			interrupt-names = "ovp-irq", "pre-flash-irq",
+					  "flash-irq";
+			qcom,string-cfg = <7>;
+			qcom,fs-current-limit = <25000>;
+			qcom,en-cabc;
+			qcom,cabc-sel = <1>;
+			status = "disabled";
+		};
+
+		pm6150l_lcdb: qcom,lcdb@ec00 {
+			compatible = "qcom,lcdb-pm6150l";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0xec00>;
+			interrupts = <0x5 0xec 0x1 IRQ_TYPE_EDGE_RISING>;
+			interrupt-names = "sc-irq";
+			status = "disabled";
+
+			lcdb_ldo_vreg: ldo {
+				label = "ldo";
+				regulator-name = "lcdb_ldo";
+				regulator-min-microvolt = <4000000>;
+				regulator-max-microvolt = <6000000>;
+			};
+
+			lcdb_ncp_vreg: ncp {
+				label = "ncp";
+				regulator-name = "lcdb_ncp";
+				regulator-min-microvolt = <4000000>;
+				regulator-max-microvolt = <6000000>;
+			};
+
+			lcdb_bst_vreg: bst {
+				label = "bst";
+				regulator-name = "lcdb_bst";
+				regulator-min-microvolt = <4700000>;
+				regulator-max-microvolt = <6275000>;
+			};
+		};
+	};
+};

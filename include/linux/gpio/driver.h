@@ -371,6 +371,8 @@ struct gpio_irq_chip {
  *      array must be @ngpio entries long.  A name can include a single printk
  *      format specifier for an unsigned int.  It is substituted by the actual
  *      number of the gpio.
+ * @skip_initial_direction: do not query every line at registration; consumer
+ *	queries are still supported by get_direction().
  * @can_sleep: flag must be set iff get()/set() methods sleep, as they
  *	must while accessing GPIO expander chips over I2C or SPI. This
  *	implies that if the chip supports IRQs, these IRQs need to be threaded
@@ -461,6 +463,7 @@ struct gpio_chip {
 	u16			offset;
 	const char		*const *names;
 	bool			can_sleep;
+	bool			skip_initial_direction;
 
 #if IS_ENABLED(CONFIG_GPIO_GENERIC)
 	unsigned long (*read_reg)(void __iomem *reg);

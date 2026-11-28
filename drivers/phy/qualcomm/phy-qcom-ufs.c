@@ -117,6 +117,29 @@ struct ufs_qcom_phy *get_ufs_qcom_phy(struct phy *generic_phy)
 }
 EXPORT_SYMBOL(get_ufs_qcom_phy);
 
+/*
+ * Surya bring-up: one switch that separates "a driver has to exist for this
+ * node" from "the PHY's own register programming is what stops this board".
+ * With surya_phy=stub every access this driver makes to the QMP block lands in
+ * RAM instead of the hardware: the region is still ioremapped (so it stays
+ * claimed and the error paths are unchanged) but the pointer the driver uses
+ * is swapped for a zeroed buffer of the same size.  Clocks, regulators and the
+ * host-side reset toggle keep running, so the only variable that moves is the
+ * readl()/writel() pair against phy->mmio -- which covers ufs_qcom_phy_write_tbl(),
+ * the calibration tables, UFS_PHY_SW_RESET, UFS_PHY_PHY_START and the
+ * UFS_PHY_PCS_READY_STATUS poll in one place.  Default is the untouched
+ * behaviour: real hardware access.  Both modes print which one is live, because
+ * a capture that does not name its own mode is worth half as much.
+ */
+static bool surya_phy_stub;
+
+static int __init surya_phy_setup(char *str)
+{
+	surya_phy_stub = !strcmp(str, "stub");
+	return 1;
+}
+__setup("surya_phy=", surya_phy_setup);
+
 static
 int ufs_qcom_phy_base_init(struct platform_device *pdev,
 			   struct ufs_qcom_phy *phy_common)
@@ -133,6 +156,29 @@ int ufs_qcom_phy_base_init(struct platform_device *pdev,
 		dev_err(dev, "%s: ioremap for phy_mem resource failed %d\n",
 			__func__, err);
 		return err;
+	}
+
+	dev_notice(dev, "Surya phy: mode=%s\n",
+		   surya_phy_stub ? "stub" : "hardware");
+
+	if (surya_phy_stub) {
+		size_t map_size = PAGE_ALIGN(resource_size(res));
+		void *scratch;
+
+		/*
+		 * The driver's whole access window is COM_BASE..PHY_BASE+PHY_SIZE,
+		 * which the DT sizes to exactly 0xe00 here (PAGE_ALIGN keeps the
+		 * buffer at least as wide as the mapping it replaces).
+		 */
+		scratch = devm_kzalloc(dev, map_size, GFP_KERNEL);
+		if (!scratch) {
+			phy_common->mmio = NULL;
+			return -ENOMEM;
+		}
+
+		phy_common->mmio = (__force void __iomem *)scratch;
+		dev_notice(dev, "Surya phy: mode=stub, mmio -> %zu KiB RAM, PHY registers untouched\n",
+			   map_size >> 10);
 	}
 
 	return 0;
@@ -166,6 +212,7 @@ struct phy *ufs_qcom_phy_generic_probe(struct platform_device *pdev,
 	if (IS_ERR(phy_provider)) {
 		err = PTR_ERR(phy_provider);
 		dev_err(dev, "%s: failed to register phy %d\n", __func__, err);
+		generic_phy = NULL;
 		goto out;
 	}
 
@@ -284,19 +331,20 @@ skip_txrx_clk:
 	__ufs_qcom_phy_clk_get(phy_common->dev, "ref_clk_pad_en",
 				&phy_common->ref_clk_pad_en, false);
 
-	/*
-	 * Some platforms may not have the ON/OFF control for reference clock,
-	 * hence this clock may be optional.
-	 */
-	__ufs_qcom_phy_clk_get(phy_common->dev, "ref_clk",
-				   &phy_common->ref_clk, false);
+	/* Optional in the binding, but honor errors for clocks the DT supplies. */
+	phy_common->ref_clk = devm_clk_get_optional(phy_common->dev, "ref_clk");
+	if (IS_ERR(phy_common->ref_clk)) {
+		err = PTR_ERR(phy_common->ref_clk);
+		phy_common->ref_clk = NULL;
+		return dev_err_probe(phy_common->dev, err, "failed to get ref_clk\n");
+	}
 
-	/*
-	 * "ref_aux_clk" is optional and only supported by certain
-	 * phy versions, don't abort init if it's not found.
-	 */
-	 __ufs_qcom_phy_clk_get(phy_common->dev, "ref_aux_clk",
-				   &phy_common->ref_aux_clk, false);
+	phy_common->ref_aux_clk = devm_clk_get_optional(phy_common->dev, "ref_aux_clk");
+	if (IS_ERR(phy_common->ref_aux_clk)) {
+		err = PTR_ERR(phy_common->ref_aux_clk);
+		phy_common->ref_aux_clk = NULL;
+		return dev_err_probe(phy_common->dev, err, "failed to get ref_aux_clk\n");
+	}
 
 	 /*
 	  * "qref_clk_signal" is optional. It is needed for certain platforms.
@@ -406,16 +454,32 @@ int ufs_qcom_phy_init_vregulators(struct ufs_qcom_phy *phy_common)
 {
 	int err;
 
+	/*
+	 * -ENODATA from ufs_qcom_phy_init_vreg() means "this node has no
+	 * <name>-supply phandle", which is how the Surya device tree is written on
+	 * purpose: the PM6150 LDOs the 4.14 driver points vdda-phy/vdda-pll at are
+	 * RPMh VRM children registered as regulator *class devices*, so no struct
+	 * device ever appears at that phandle and fw_devlink leaves the phy -- and
+	 * through it the UFS host -- deferred forever (commit 79e442b89, and the
+	 * note above &ufsphy_mem in surya-sm6150.dts).  A phy with no supply is a
+	 * phy whose rails stay as the bootloaders left them, and the boot LUN
+	 * hangs off VCC/VCCQ2 which the ABL already voted.  The three optional
+	 * vregs below were already ignored; it was only these two that aborted phy
+	 * init, which is how a board with a bound PHY still ends up with no
+	 * /dev/disk/by-name.
+	 */
 	err = ufs_qcom_phy_init_vreg(phy_common->dev, &phy_common->vdda_pll,
 		"vdda-pll");
-	if (err)
+	if (err && err != -ENODATA)
 		goto out;
 
 	err = ufs_qcom_phy_init_vreg(phy_common->dev, &phy_common->vdda_phy,
 		"vdda-phy");
 
-	if (err)
+	if (err && err != -ENODATA)
 		goto out;
+
+	err = 0;
 
 	ufs_qcom_phy_init_vreg(phy_common->dev, &phy_common->vddp_ref_clk,
 				     "vddp-ref-clk");
@@ -471,7 +535,14 @@ static int ufs_qcom_phy_enable_vreg(struct device *dev,
 {
 	int ret = 0;
 
-	if (!vreg || vreg->enabled)
+	/*
+	 * vreg->reg is NULL when the device tree carried no <name>-supply phandle
+	 * (see ufs_qcom_phy_init_vregulators).  ufs_qcom_phy_cfg_vreg() survives a
+	 * NULL regulator, but regulator_enable() is not an inline while
+	 * CONFIG_REGULATOR=y -- it dereferences regulator->rdev before it looks at
+	 * anything -- so the guard has to sit above both calls.
+	 */
+	if (!vreg || vreg->enabled || !vreg->reg)
 		goto out;
 
 	ret = ufs_qcom_phy_cfg_vreg(dev, vreg, true);
@@ -588,7 +659,8 @@ static int ufs_qcom_phy_disable_vreg(struct device *dev,
 {
 	int ret = 0;
 
-	if (!vreg || !vreg->enabled)
+	/* !vreg->reg: it was never enabled above, so there is nothing to undo. */
+	if (!vreg || !vreg->enabled || !vreg->reg)
 		goto out;
 
 	ret = regulator_disable(vreg->reg);
@@ -802,7 +874,7 @@ int ufs_qcom_phy_power_on(struct phy *generic_phy)
 		if (err) {
 			dev_err(dev, "%s enable vdda_qref failed, err=%d\n",
 				__func__, err);
-			goto out;
+			goto out_disable_gdsc;
 		}
 	}
 
@@ -810,7 +882,7 @@ int ufs_qcom_phy_power_on(struct phy *generic_phy)
 	if (err) {
 		dev_err(dev, "%s enable vdda_phy failed, err=%d\n",
 			__func__, err);
-		goto out;
+		goto out_disable_qref;
 	}
 
 	phy_common->phy_spec_ops->power_control(phy_common, true);
@@ -857,7 +929,14 @@ out_disable_iface_clk:
 out_disable_pll:
 	ufs_qcom_phy_disable_vreg(dev, &phy_common->vdda_pll);
 out_disable_phy:
+	phy_common->phy_spec_ops->power_control(phy_common, false);
 	ufs_qcom_phy_disable_vreg(dev, &phy_common->vdda_phy);
+out_disable_qref:
+	if (phy_common->vdda_qref.reg)
+		ufs_qcom_phy_disable_vreg(dev, &phy_common->vdda_qref);
+out_disable_gdsc:
+	if (phy_common->vdd_phy_gdsc.reg)
+		ufs_qcom_phy_disable_vreg(dev, &phy_common->vdd_phy_gdsc);
 out:
 	return err;
 }

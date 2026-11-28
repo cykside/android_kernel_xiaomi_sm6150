@@ -1,0 +1,65 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/* Offline fixture only: exercise the same single-symbol scheme as Violet. */
+/* SDMMagpie names 0x1700000 aggre2, not aggre1. */
+#define SM6150_AGGRE1_NOC_UNIT_ADDRESS 16e0000
+#define SM6150_AGGRE1_NOC_REG 0x16e0000 0x11080
+#include "surya-sm6150-cmd-db-test.dts"
+
+/ {
+	/* Give the target a phandle without exporting every label with -@. */
+	xiaomi,surya-overlay-target = <&soc>;
+	__symbols__ {
+		soc = "/soc";
+	};
+};
+
+/* Avoid the inherited QoS MMIO programming during bring-up. Keep RPMh votes. */
+&dc_noc { qcom,skip-qos; };
+&gem_noc { qcom,skip-qos; };
+&config_noc { qcom,skip-qos; };
+&system_noc { qcom,skip-qos; };
+&aggre1_noc {
+	qcom,skip-qos;
+	/* These bulk clocks serve QoS setup only; UFS keeps its own clocks. */
+	/delete-property/ clocks;
+};
+&mmss_noc { qcom,skip-qos; };
+
+/* The FSociety SDMMagpie base and Surya overlay use UFS without an IOMMU specifier. */
+&ufshc_mem {
+	/delete-property/ iommus;
+	/delete-property/ qcom,iommu-dma;
+};
+
+/* Keep the QMP v3 reset link: legacy 4.14 toggles the same host
+ * soft reset around PHY calibration without using a DT phandle.
+ */
+/* Keep this persistent region out of the linear RAM mapping for earlycon. */
+&{/reserved-memory/ramoops@9d800000} {
+	no-map;
+};
+
+/*
+ * "xiaomi,surya-gcc" selects the Surya behaviour of the GCC probe: the
+ * one-word stage markers and the skip of the SM8150 MISC/always-on writes.
+ * It used to select a retargeting of the UFS branch clock registers to
+ * SDMMagpie offsets as well; that was wrong (SM6150's own driver and the 4.14
+ * vendor driver agree) and it cost five captures, so the compatible must not
+ * grow another hardware fixup here.  See gcc_sm6150_probe().
+ */
+&gcc {
+	compatible = "xiaomi,surya-gcc", "qcom,sm6150-gcc", "syscon";
+};
+
+/* RPMh clients obtain their controller from the immediate DRV parent. */
+/delete-node/ &disp_bcm_voter;
+&disp_rsc_drv0 {
+	surya_disp_bcm_voter: bcm_voter {
+		compatible = "qcom,bcm-voter";
+		qcom,tcs-wait = <QCOM_ICC_TAG_AMC>;
+	};
+};
+
+&mc_virt { qcom,bcm-voters = <&apps_bcm_voter>, <&surya_disp_bcm_voter>; };
+&gem_noc { qcom,bcm-voters = <&apps_bcm_voter>, <&surya_disp_bcm_voter>; };
+&mmss_noc { qcom,bcm-voters = <&apps_bcm_voter>, <&surya_disp_bcm_voter>; };

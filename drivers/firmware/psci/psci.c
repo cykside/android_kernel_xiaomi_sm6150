@@ -658,6 +658,9 @@ static int __init psci_probe(void)
 		kvm_init_hyp_services();
 	}
 
+	pr_notice("Firmware SYSTEM_RESET2 (warm reset): %s\n",
+		  psci_system_reset2_supported ? "supported" : "not supported");
+
 	return 0;
 }
 

@@ -113,7 +113,7 @@ int qcom_icc_set(struct icc_node *src, struct icc_node *dst)
 	struct icc_node *node;
 	struct qcom_icc_node *qn;
 	u64 clk_rate;
-	int i, ret;
+	int i, ret, first_err = 0;
 
 	if (!src)
 		node = dst;
@@ -161,10 +161,13 @@ int qcom_icc_set(struct icc_node *src, struct icc_node *dst)
 		}
 	}
 
-	for (i = 0; i < qp->num_voters; i++)
-		qcom_icc_bcm_voter_commit(qp->voters[i]);
+	for (i = 0; i < qp->num_voters; i++) {
+		ret = qcom_icc_bcm_voter_commit(qp->voters[i]);
+		if (ret && !first_err)
+			first_err = ret;
+	}
 
-	return 0;
+	return first_err;
 }
 EXPORT_SYMBOL_GPL(qcom_icc_set);
 
@@ -196,7 +199,8 @@ int qcom_icc_bcm_init(struct qcom_icc_provider *qp, struct qcom_icc_bcm *bcm,
 	struct qcom_icc_node *qn;
 	const struct bcm_db *data;
 	struct bcm_voter *voter;
-	size_t data_count;
+	size_t data_len;
+	u32 addr;
 	int ret;
 	int i;
 
@@ -204,20 +208,20 @@ int qcom_icc_bcm_init(struct qcom_icc_provider *qp, struct qcom_icc_bcm *bcm,
 	if (bcm->disabled || bcm->addr)
 		return 0;
 
-	bcm->addr = cmd_db_read_addr(bcm->name);
-	if (!bcm->addr) {
+	addr = cmd_db_read_addr(bcm->name);
+	if (!addr) {
 		dev_err(dev, "%s could not find RPMh address\n",
 			bcm->name);
 		return -EINVAL;
 	}
 
-	data = cmd_db_read_aux_data(bcm->name, &data_count);
+	data = cmd_db_read_aux_data(bcm->name, &data_len);
 	if (IS_ERR(data)) {
 		dev_err(dev, "%s command db read error (%ld)\n",
 			bcm->name, PTR_ERR(data));
 		return PTR_ERR(data);
 	}
-	if (!data_count) {
+	if (data_len < sizeof(*data)) {
 		dev_err(dev, "%s command db missing or partial aux data\n",
 			bcm->name);
 		return -EINVAL;
@@ -229,6 +233,7 @@ int qcom_icc_bcm_init(struct qcom_icc_provider *qp, struct qcom_icc_bcm *bcm,
 	bcm->aux_data.reserved = data->reserved;
 	INIT_LIST_HEAD(&bcm->list);
 	INIT_LIST_HEAD(&bcm->ws_list);
+	bcm->addr = addr;
 
 	if (!bcm->vote_scale)
 		bcm->vote_scale = 1000;
@@ -362,8 +367,8 @@ static struct regmap *qcom_icc_rpmh_map(struct platform_device *pdev,
 		return NULL;
 
 	base = devm_ioremap(dev, res->start, resource_size(res));
-	if (IS_ERR(base))
-		return ERR_CAST(base);
+	if (!base)
+		return ERR_PTR(-ENOMEM);
 
 	return devm_regmap_init_mmio(dev, base, desc->config);
 }
@@ -482,19 +487,23 @@ int qcom_icc_rpmh_probe(struct platform_device *pdev)
 			if (desc->voters[i] && !is_voter_disabled(desc->voters[i])) {
 				qp->voters[i] = of_bcm_voter_get(qp->dev, desc->voters[i]);
 				if (IS_ERR(qp->voters[i]))
-					return PTR_ERR(qp->voters[i]);
+					return dev_err_probe(dev, PTR_ERR(qp->voters[i]),
+							     "BCM voter %s unavailable\n",
+							     desc->voters[i]);
 			}
 		}
 	}
 
 	qp->regmap = qcom_icc_rpmh_map(pdev, desc);
 	if (IS_ERR(qp->regmap))
-		return PTR_ERR(qp->regmap);
+		return dev_err_probe(dev, PTR_ERR(qp->regmap),
+				     "failed to map NoC registers\n");
 
 
 	qp->num_clks = devm_clk_bulk_get_all(qp->dev, &qp->clks);
 	if (qp->num_clks < 0)
-		return qp->num_clks;
+		return dev_err_probe(dev, qp->num_clks,
+				     "failed to acquire NoC bulk clocks\n");
 
 	for (i = 0; i < qp->num_bcms; i++)
 		qcom_icc_bcm_init(qp, qp->bcms[i], dev);
@@ -542,8 +551,10 @@ int qcom_icc_rpmh_probe(struct platform_device *pdev)
 	}
 
 	ret = icc_provider_register(provider);
-	if (ret)
+	if (ret) {
+		dev_err_probe(dev, ret, "failed to register NoC provider\n");
 		goto err_remove_nodes;
+	}
 
 	platform_set_drvdata(pdev, qp);
 
@@ -571,7 +582,6 @@ int qcom_icc_rpmh_probe(struct platform_device *pdev)
 err_deregister_provider:
 	icc_provider_deregister(provider);
 err_remove_nodes:
-	clk_bulk_put_all(qp->num_clks, qp->clks);
 	icc_nodes_remove(provider);
 
 	return ret;
@@ -583,7 +593,6 @@ int qcom_icc_rpmh_remove(struct platform_device *pdev)
 	struct qcom_icc_provider *qp = platform_get_drvdata(pdev);
 	icc_provider_deregister(&qp->provider);
 	qcom_icc_debug_unregister(&qp->provider);
-	clk_bulk_put_all(qp->num_clks, qp->clks);
 	icc_nodes_remove(&qp->provider);
 
 	return 0;
@@ -619,7 +628,7 @@ void qcom_icc_rpmh_sync_state(struct device *dev)
 
 		for (i = 0; i < qp->num_bcms; i++) {
 			bcm = qp->bcms[i];
-			if (!bcm->keepalive && !bcm->keepalive_early)
+			if (!bcm->addr || (!bcm->keepalive && !bcm->keepalive_early))
 				continue;
 
 			bcm->keepalive_early = false;

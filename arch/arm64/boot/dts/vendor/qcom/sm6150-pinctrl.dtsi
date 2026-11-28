@@ -1,5 +1,9 @@
+#ifndef SM6150_TLMM_UNIT_ADDRESS
+#define SM6150_TLMM_UNIT_ADDRESS 03000000
+#endif
+
 &soc {
-	tlmm: pinctrl@03000000 {
+	tlmm: pinctrl@SM6150_TLMM_UNIT_ADDRESS {
 		compatible = "qcom,sm6150-pinctrl";
 		reg = <0x03000000 0xdc2000>, <0x17c000f0 0x50>;
 		reg-names = "pinctrl", "spi_cfg";

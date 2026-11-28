@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/* Integration fixture only. Storage remains disabled. Do not flash. */
+#include "surya-sm6150-tlmm-audit.dts"
+#include "surya-ufs-audit.dtsi"
+
+&{/soc/command-db@c3f000c} {
+	status = "okay";
+};
+
+&tlmm {
+	status = "okay";
+};

@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/* Offline DTB only. The TLMM remains disabled: do not boot this variant. */
+#define SM6150_TLMM_UNIT_ADDRESS 3400000
+#include "surya-sm6150.dts"
+
+&tlmm {
+	compatible = "qcom,sdmmagpie-pinctrl";
+	reg = <0x03400000 0xdc2000>, <0x17c000f0 0x60>;
+	interrupts = <GIC_SPI 208 IRQ_TYPE_LEVEL_HIGH>;
+	status = "disabled";
+};
+
+/* Its base pin states and SE0 ownership are not valid for Surya. */
+&qupv3_se0_2uart {
+	status = "disabled";
+};
+
+/* Reference the dedicated pad only with the SDMMagpie pin mapping. */
+&ufshc_mem {
+	pinctrl-names = "dev-reset-assert", "dev-reset-deassert";
+	pinctrl-0 = <&ufs_dev_reset_assert>;
+	pinctrl-1 = <&ufs_dev_reset_deassert>;
+};
+
+/* Offline only: validate the alternative layout without probing it. */
+/delete-node/ &aop_cmd_db;
+&xbl_aop_mem {
+	reg = <0x0 0x85e00000 0x0 0x1ff000>;
+};
+
+&soc {
+	command-db@c3f000c {
+		compatible = "qcom,sdmmagpie-cmd-db";
+		reg = <0x0c3f000c 0x8>;
+		memory-region = <&xbl_aop_mem>;
+		status = "disabled";
+	};
+};
+
+/* Move the entire contiguous DSP/WLAN/NPU window together. */
+&rproc_cdsp_mem {
+	reg = <0x0 0x93900000 0x0 0x1e00000>;
+};
+
+&rproc_adsp_mem {
+	reg = <0x0 0x95700000 0x0 0x1e00000>;
+};
+
+/delete-node/ &wlan_msa_mem;
+
+&{/reserved-memory} {
+	wlan_msa_mem: wlan_msa_region@97500000 {
+		reg = <0x0 0x97500000 0x0 0x180000>;
+		no-map;
+	};
+
+	npu_region@97680000 {
+		reg = <0x0 0x97680000 0x0 0x80000>;
+		no-map;
+	};
+};
+
+&adsp_pas {
+	status = "disabled";
+};
+
+&cdsp_pas {
+	status = "disabled";
+};
+
+/* The live display layout is contiguous with ramoops, without ramdump. */
+&cont_splash_memory {
+	reg = <0x0 0x9c000000 0x0 0x1700000>;
+};
+
+/delete-node/ &dfps_data_memory;
+/delete-node/ &disp_rdump_memory;
+
+&{/reserved-memory} {
+	dfps_data_memory: dfps_data_region@9d700000 {
+		reg = <0x0 0x9d700000 0x0 0x100000>;
+		label = "dfps_data_region";
+	};
+};
+
+/* Inherited UART pin states are not validated on SDMMagpie. */
+&qupv3_se4_2uart {
+	status = "disabled";
+};
+
+&qupv3_se7_4uart {
+	status = "disabled";
+};

@@ -1,0 +1,402 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/dts-v1/;
+
+#include "sm6150.dtsi"
+#include "surya-pinctrl.dtsi"
+#include "surya-pm6150.dtsi"
+#include "surya-display.dtsi"
+#include "surya-touch.dtsi"
+#include "surya-haptics.dtsi"
+#include "surya-nfc.dtsi"
+
+/* Bring-up stub only. Do not flash: inherited platform data is unvalidated. */
+/ {
+	model = "Xiaomi POCO X3 NFC";
+	compatible = "xiaomi,surya", "qcom,sm6150";
+
+	/* IDs from the 4.14 sdmmagpie-idp-overlay-miui.dts. */
+	qcom,msm-id = <365 0x0>;
+	qcom,board-id = <34 0>;
+};
+
+&reserved_memory {
+	/*
+	 * pstore geometry, taken from the only rounds of this bring-up that ever
+	 * produced a readable log, not from a theory.  Every line below is pinned
+	 * to a capture by .github/workflows/surya-dtb.yml.
+	 *
+	 * The kernel that reads these records back is the stock 4.14 recovery, and
+	 * it says what it declared in its own dmesg, identically in every round
+	 * (twrp-pstore-facts-2.txt .. twrp-pstore-facts-11.txt):
+	 *
+	 *	[    0.231385] console [pstore0] enabled
+	 *	[    0.231485] pstore: Registered ramoops as persistent store backend
+	 *	[    0.231500] ramoops: attached 0x400000@0x9d800000, ecc: 0/0
+	 *
+	 * 0x400000 at 0x9d800000 with no ECC, which with the shared partitioning
+	 * rule (fs/pstore/ram.c: dump = size - console - ftrace - pmsg, cnt =
+	 * dump / record-size, zone = dump / cnt) and the vendor node
+	 * (sdmmagpie.dtsi:669, record 0x80000, console 0x100000, pmsg 0x200000)
+	 * lays out as
+	 *
+	 *	0x9d800000  dmesg prz 0   0x9d880000  dmesg prz 1
+	 *	0x9d900000  console prz   0x9da00000  pmsg prz
+	 *
+	 * MIRRORING that map is what makes a capture readable: the reader exports
+	 * the przs it knows about, at its addresses, and 4.14 has no
+	 * PRZ_FLAG_ZAP_OLD -- a valid header it finds is snapshotted with
+	 * persistent_ram_save_old() and left intact, which is why the same text is
+	 * still in the window after it has been read.  The rounds that mirrored it
+	 * are the rounds that worked:
+	 *
+	 *	console-ramoops-8.txt   26660 B  (build g108d1f6c6a9)
+	 *	console-ramoops-9.txt   57576 B  (build g94eb89742f3)
+	 *	console-ramoops-10.txt 234520 B  (build g832351361a00) -- whole boot,
+	 *	console-ramoops-13.txt  63076 B  (build g1f16c185f4a3)    ends at
+	 *	                          "[   36.975139] Rebooting in 5 seconds.."
+	 *
+	 * That channel is plain text because pstore's *console* path is not the
+	 * compressed one: our kernel prints "pstore: Using crash dump compression:
+	 * deflate" for crash dumps only, so prz records of the dmesg type arrive
+	 * as deflate.  Reading those through the recovery is capture 14 -- 14225 B,
+	 * 39.2 % printable, header `====6.70<ts>-C` and no inflatable stream at any
+	 * offset or wbits -- and it is what our own dmesg prz #2 looked like when a
+	 * 0x240000 reg pushed it to 0x9d900000, the reader's console window.  A
+	 * mislabelled prz, not a silent boot.
+	 *
+	 *
+	 * Why console-size is not negotiable, in the tree's own words and in the
+	 * captures'.  ramoops_init_prz() returns at fs/pstore/ram.c:570 when the
+	 * size it was handed is 0, so with console-size 0 no prz exists at
+	 * 0x9d900000 and pstore_register() has no console to register -- and the
+	 * pstore console is the only writer of that window.  Every readable round
+	 * shows it happening, in the log of our own kernel:
+	 *
+	 *	console-ramoops-10.txt  [    0.000000][    T0] printk: bootconsole
+	 *	                                   [ramoops0] enabled
+	 *	console-ramoops-10.txt  [    0.265985][    T1] printk: console
+	 *	                                   [ramoops-1] enabled
+	 *
+	 * `ramoops-1' is that console, not a second earlycon: pstore_console takes
+	 * the backend's name (fs/pstore/platform.c:513 strscpy(pstore_console.name,
+	 * psinfo->name)) and this backend is "ramoops" (fs/pstore/ram.c:442), with
+	 * .index = -1 -- hence the -1 that upstream would print as `pstore0'.  It
+	 * registers with CON_PRINTBUFFER, so the replay from 0.000000 s is what
+	 * puts the whole boot into the prz, and it is why losing the earlycon's own
+	 * ring at ~0.1 s costs nothing on a boot that survives that long.
+	 *
+	 * One correction to the record, because the file said more than it does:
+	 * an earlier draft of this comment claimed the round before this one came
+	 * back with a mounted and *empty* /sys/fs/pstore.  That "total 0" listing is
+	 * pstore-mount-6.txt, whose suffix belongs to an older upload round, not to
+	 * the console-size-0 build.  What that round actually left behind is
+	 * console-ramoops-14.txt -- 14225 B, 39.2 % printable, our own deflate
+	 * dmesg records seen through the reader's console window, because the
+	 * shrunk reg moved prz #2 onto 0x9d900000.  The sizes are the bug either
+	 * way; the empty mount was not its observed symptom.
+	 *
+	 * ECC stays 0.  That is the one deliberate difference from the vendor node,
+	 * which says 0x10, and the four readable rounds were built with that 0x10 --
+	 * which is why the reason is visible in their own text, three to four lines in:
+	 *
+	 *	console-ramoops-9.txt	 3x  ramoops: uncorrectable error in header
+	 *	console-ramoops-10.txt	 4x  "     (first at 0.085229 s)
+	 *	console-ramoops-13.txt	 4x  "     (grep -n says lines 205-208)
+	 *	console-ramoops-8.txt	 0x  "     (the one round whose earlycon died first)
+	 *
+	 * With ecc on, prz->buffer_size is zone - 12 - ecc_total with the parity tail
+	 * at buffer->data + buffer_size (fs/pstore/ram_core.c:216-219), and
+	 * persistent_ram_check_valid() rejects a zone that was written without parity:
+	 * fs/pstore/ram_core.c:249 is that pr_info.  So an ECC-enabled prz resets the
+	 * header of the ring the previous boot left behind -- deleting the only text
+	 * the earlycon exists to keep.  The reader declares no ECC either; its
+	 * `ecc: %d/%d` prints cxt->ecc_info.ecc_size and .block_size (4.14
+	 * fs/pstore/ram.c:878) and every round says 0/0.
+	 *
+	 * What ECC does NOT explain, and what an earlier draft of this comment claimed:
+	 * the zaps of rounds 1 and 11 ("found existing invalid buffer, size 52101,
+	 * start 52133" and "size 57821, start 192977").  Those numbers are prz
+	 * geometry, and both rounds had reg/console values that moved the geometry --
+	 * the same mistake the sizes above remove.
+	 *
+	 * no-map is absent here, matching the vendor node, which is not a claim to
+	 * have fixed anything.  The flashable DTB is assembled from the offline layers,
+	 * and arch/arm64/boot/dts/vendor/qcom/surya-sm6150-v2-test.dts:38 has added
+	 * `no-map;` to this very node since 3fd371679, so every capture so far -- the
+	 * four readable ones included -- came from a DTB that had it.  It stays that
+	 * way for now on purpose: one changed variable per flash round.  If this
+	 * round's capture comes back with a torn first line, that line of that file is
+	 * the next thing to delete, and nothing else is.
+	 *
+	 * The earlycon (tools/surya-anykernel/boot-test.sh,
+	 * earlycon=ramoops,0x9da00000,0x40000) points at the pmsg prz, whose only
+	 * other producer is /dev/pmsg0 from userspace -- which a board that never
+	 * mounts /vendor never reaches.  It is redundant on a boot that survives to
+	 * pstore_register (the console replays the whole log buffer from 0.0 s) and
+	 * it is the only record of one that does not.
+	 */
+	ramoops@9d800000 {
+		compatible = "ramoops";
+		reg = <0x0 0x9d800000 0x0 0x00400000>;
+		record-size = <0x80000>;
+		pmsg-size = <0x200000>;
+		console-size = <0x100000>;
+		ecc-size = <0x0>;
+		max-reason = <4>;
+	};
+};
+
+/*
+ * The shared SM6150 DT instantiates the 4.14-style vendor gdsc-regulator
+ * devices under /soc, but that driver ioremaps the DT reg verbatim while
+ * these nodes carry GCC-relative offsets (0x177004 etc.) — so every probe
+ * pokes a dead window beside the GCC block.  The first complete boot log
+ * (2026-11-27, build 5f716c31f) shows the resulting asynchronous SError
+ * landing inside gdsc_probe at 0.33s: readl -> arm_serror_panic -> Kernel
+ * panic.  The upstream boot path needs none of them: the 6.1 clock driver
+ * owns GDSCs through its C tables, the UFS GDSC is left enabled by the
+ * bootloaders exactly as on the stock 4.14 firmware, and the TBU vote
+ * nodes have no 6.1 consumer.  Disable the whole family (Violet's own
+ * device trees never instantiate it with this driver).
+ */
+&emac_gdsc { status = "disabled"; };
+&pcie_0_gdsc { status = "disabled"; };
+&ufs_phy_gdsc { status = "disabled"; };
+&usb30_prim_gdsc { status = "disabled"; };
+&usb20_sec_gdsc { status = "disabled"; };
+&hlos1_vote_aggre_noc_mmu_audio_tbu_gdsc { status = "disabled"; };
+&hlos1_vote_aggre_noc_mmu_tbu1_gdsc { status = "disabled"; };
+&hlos1_vote_aggre_noc_mmu_tbu2_gdsc { status = "disabled"; };
+&hlos1_vote_aggre_noc_mmu_pcie_tbu_gdsc { status = "disabled"; };
+&hlos1_vote_mmnoc_mmu_tbu_hf0_gdsc { status = "disabled"; };
+&hlos1_vote_mmnoc_mmu_tbu_hf1_gdsc { status = "disabled"; };
+&hlos1_vote_mmnoc_mmu_tbu_sf_gdsc { status = "disabled"; };
+&bps_gdsc { status = "disabled"; };
+&ife_0_gdsc { status = "disabled"; };
+&ife_1_gdsc { status = "disabled"; };
+&ipe_0_gdsc { status = "disabled"; };
+&titan_top_gdsc { status = "disabled"; };
+&mdss_core_gdsc { status = "disabled"; };
+&gpu_cx_gdsc { status = "disabled"; };
+&gpu_gx_gdsc { status = "disabled"; };
+&vcodec0_gdsc { status = "disabled"; };
+&venus_gdsc { status = "disabled"; };
+
+/*
+ * CPU idle states.  This board ships a downstream (4.14-era) PSCI
+ * implementation that refuses the OSI-mode switch -- "psci: failed to set PC
+ * mode: -3" in every Surya capture -- and has no mapping for the state IDs the
+ * inherited DT votes (0x40000003 "pc", 0x40000004 "rail-pc").  The 2026-11-27
+ * 20:46 capture shows what that costs: CPU#7 stopped answering IPIs around the
+ * first idle entry (~2s), so kick_all_cpus_sync() from the jump-label update
+ * spun forever in smp_call_function_many_cond(), RCU never finished a grace
+ * period, and init never ran.  Disabling the four CPU states leaves
+ * cpuidle-psci with only the WFI state (drivers/cpuidle/dt_idle_states.c skips
+ * unavailable states and cpuidle-psci.c adds WFI unconditionally), which is the
+ * same idle the stock 4.14 kernel uses until its lpm-levels driver binds.
+ * The cluster domain states stay described for the runtime-PM path but are
+ * never entered, because no CPU state asks for a cluster power down.
+ */
+&SILVER_OFF { status = "disabled"; };
+&SILVER_PLL_OFF { status = "disabled"; };
+&GOLD_OFF { status = "disabled"; };
+&GOLD_RAIL_OFF { status = "disabled"; };
+
+/*
+ * Boot arguments.  sm6150.dtsi ships fw_devlink.strict=1, which makes every
+ * property that lists a phandle a mandatory probe dependency -- including the
+ * ones whose supplier is a class device with no driver of its own (see the
+ * UFS note below).  fw_devlink=permissive keeps the ordering hints but stops
+ * deferring probes on suppliers that can never report "probed", which is how a
+ * device tree whose suppliers are class devices (not bound platform drivers) is
+ * booted.  loglevel=8 stays because the Surya bring-up markers print at
+ * KERN_DEBUG/KERN_NOTICE: at loglevel=7 (the 2026-11-28 21:40 capture) the
+ * whole deferral story and the storage snapshot lines were invisible.
+ *
+ * initcall_debug=1 is dropped as of capture 11.  It is what the last four
+ * captures were mined for -- its "probe of af00000.clock-controller returned 0
+ * after 6822 usecs" is how dispcc became the control case for GCC -- but one
+ * line per initcall and per probe attempt is ~1500 lines, and the 2 MiB
+ * console prz then wraps mid-boot: capture 11 came back with two boots
+ * byte-interleaved, so the GCC evidence had to be reconstructed instead of
+ * read.  gcc_sm6150_probe() now prints one short stage line per step of its
+ * own, which is what survives a wrapped buffer, and tools/surya-anykernel no
+ *
+ * clk_ignore_unused is here because of capture 13, and it is a behaviour knob,
+ * not a logging one.  The 6.1 clock framework runs clk_disable_unused() at
+ * late_initcall and gates every clock that no driver has claimed, which the
+ * downstream 4.14 driver never does: instead of relying on the framework it
+ * lists gcc_camera_{ahb,xo}_clk, gcc_disp_{ahb,xo}_clk, gcc_video_{ahb,xo}_clk,
+ * gcc_gpu_cfg_ahb_clk, gcc_cpuss_ahb_clk, gcc_cpuss_gnoc_clk and
+ * gcc_sys_noc_cpuss_ahb_clk as "critical" and enables them itself
+ * (qcom_cc_enable_critical_clks()).  This tree lost that list and kept only the
+ * SM8150 register writes that served the same purpose on that SoC -- so by the
+ * time the deferred pass reached gcc_sm6150_probe() the AHB path in front of the
+ * GCC MISC registers was already gated, and the read that
+ * regmap_update_bits(regmap, GCC_CAMERA_MISC, ...) performs first never
+ * returned.  Ignoring the unused-clock pass reproduces the 4.14 state for every
+ * clock the bootloaders left on, which is the whole point of bring-up here; it
+ * also covers the display, camera and GPU register spaces for the same price.
+ *
+ * softlockup_panic=1 is what makes a capture exist at all.  The detector is
+ * already built (CONFIG_SOFTLOCKUP_DETECTOR=y from gki_defconfig) but a report
+ * it prints does not stop the boot, so on the boards where a CPU is wedged in a
+ * device access init's own 10 s block-device timeout rebooted the phone a few
+ * seconds later and the trace either landed in the wrapped tail of the prz or
+ * not at all.  With panic the reboot is the *panic* reboot -- warm, so DDR
+ * survives -- the buffer ends with "BUG: soft lockup - CPU#N stuck for 22s!"
+ * plus that CPU's backtrace, and the collector reads it after.  It also fixes
+ * the failure mode of the five rounds whose only listing is "total 0"
+ * (pstore-mount.txt, -2.txt .. -6.txt): those boots hung with no panic and no
+ * reboot, the user held the power key, and the round was lost -- but not to a
+ * DDR drop, which is what this comment used to claim.  The recovery's own dmesg
+ * says what happened instead: "found existing invalid buffer, size 52101, start
+ * 52133" and "size 57821, start 192977", i.e. the header our writer left was
+ * rejected and the prz erased.  See "The five flash loops were not lost to the
+ * reset" in Documentation/arm64/surya-bringup.rst.
+ */
+&chosen {
+	bootargs = "kpti=0 ssbd=force-off qcom_dma_heaps.enable_bitstream_contig_heap=y rcupdate.rcu_expedited=0 cpufreq.default_governor=performance fw_devlink=permissive cpuidle.off=1 loglevel=8 clk_ignore_unused softlockup_panic=1";
+};
+
+/*
+ * GCC's CX voltage class.  This is the line that decides whether /soc/ufshc
+ * ever probes, and capture 10 (2026-11-28 22:0x, console-ramoops-10.txt)
+ * pins it exactly:
+ *
+ *   1.257457 Surya bringup: r0 probing /soc/clock-controller@100000
+ *   1.257865 k61probe: 100000.clock-controller (gcc-sm6150)
+ *   ... nothing, ever.  No "Registered GCC clocks", and no
+ *   "Rate ... is greater than highest Fmax" line either, so the probe never
+ *   reached qcom_cc_really_probe().
+ *   5.347050 Surya bringup: provider chain still at /soc/clock-controller@100000
+ *   21.475038 Surya bringup: deferred probe still in clock-controller@100000
+ *   21.475181 task:kworker/u16:0 state:D ... __mutex_lock+0x408 __device_attach
+ *
+ * i.e. gcc_sm6150_probe() blocks with the device mutex held, and the serial
+ * deferred pass queues behind it.  Before this capture the same probe never
+ * even appeared to start, which is why the deferred-probe list looked empty.
+ *
+ * What it blocks on is the regulator graph, and the DT says why only GCC does:
+ * gcc_sm6150_probe() (drivers/clk/qcom/gcc-sm6150.c:3488) makes three
+ * mandatory devm_regulator_get() calls and returns the error of each, so an
+ * unresolved rail is a probe that cannot finish.  In sm6150-regulator.dtsi the
+ * three targets are not peers:
+ *
+ *   vdd_mx-supply    -> regulator-pm6150-s3           (leaf: no vin/parent edge)
+ *   vdd_cx-supply    -> regulator-pm6150-s1          (parent-supply -> s3)
+ *   vdd_cx_ao-supply -> regulator-pm6150-s1-level-ao (vin-supply -> s3-level-ao)
+ *
+ * The AO pair is the odd one out.  Its supplier is the MX AO arc child, whose
+ * parent block rpmh-regulator-mxlvl carries no proxy-supply at all (only cxlvl
+ * does, which is why the log reports the "Fixed dependency cycle(s)" notice for
+ * cxlvl and the VRM LDOs but not for mxlvl), and no driver in this tree except
+ * GCC asks for a vdd_cx_ao rail.  dispcc asks for vdd_cx only and its probe
+ * returned in 6822 usecs in the same window -- that is the control case: same
+ * regulator class, same ARC parent, one supply less, no stall.
+ *
+ * Capture 11 (2026-11-28) says this was necessary and not sufficient: the
+ * property is in the flashed DTB, all three supplies now resolve, and
+ * gcc_sm6150_probe() still never returns.  What it is still waiting on is
+ * that the regulator *devices* behind these phandles are children of
+ * rpmh-regulator-cxlvl/mxlvl and get bound only by the serial deferred pass,
+ * which is the pass GCC blocks -- see drivers/base/dd.c, where the chain now
+ * names those children explicitly.  This retarget stays because it removes an
+ * edge (CX AO to the MX AO arc child) that no other consumer in the tree
+ * resolves and that the AO vote does not need on a board that cannot idle.
+ *
+ * So the AO edge goes away for this board: vote the CX always-on class through
+ * the same resolvable pm6150_s1_level regulator the non-AO class uses.  For a
+ * level vote that is not a loss of information -- "AO" vs "NAPM" only selects
+ * which RPMh TCS the write goes to, i.e. whether AOSD keeps the vote across
+ * sleep, and CX is held up through the whole bring-up path (cpuidle.off=1, and
+ * this firmware refuses OSI mode anyway: "psci: failed to set PC mode: -3").
+ * The clock driver then keeps both classes pointing at one regulator; the core
+ * takes the maximum request of the two, which is exactly the corner the
+ * bootloader left the rail at.
+ */
+&gcc {
+	vdd_cx_ao-supply = <&VDD_CX_LEVEL>;
+};
+
+/*
+ * UFS host and PHY.  The 4.14 supply routing is deliberately NOT inherited.
+ * Each *-supply here names an LDO child of a qcom,rpmh-vrm-regulator parent,
+ * and the vendor rpmh-regulator driver registers those LDOs with
+ * devm_regulator_register(): the regulator struct device carries the child
+ * node as of_node but never becomes the primary fwnode device of that node,
+ * so the fw_devlink link from the UFS nodes has no supplier device to wait
+ * on and the consumer is parked without a single log line.  That is the exact
+ * shape of the 2026-11-27 20:46 failure: "/soc/ufshc@1d84000 enabled;
+ * unbound" and "/soc/ufsphy_mem@1d87000 enabled; unbound" at 4.58s with an
+ * empty deferred-probe list, so no block device ever appeared for
+ * first-stage init.
+ *
+ * Both drivers take an absent supply as "rail is already up": ufshcd does it
+ * explicitly ("Unable to find %s regulator, assuming enabled"), ufs-qcom only
+ * parses qcom,vddp-ref-clk when the property exists, and the QMP v3 PHY driver
+ * never asks for vdda-phy/vdda-pll at all.  The rails must stay as the
+ * bootloaders left them -- the boot device hangs off VCC/VCCQ2 -- so dropping
+ * the phandles is both the unblock and the honest description of the boot
+ * state.  Same reasoning as the removed vdd-hba-supply.
+ */
+&ufsphy_mem {
+	/*
+	 * "qcom,ufs-phy-qmp-v3", because that is the string stock uses for this
+	 * silicon: arch/arm64/boot/dts/qcom/sdmmagpie.dtsi of the 4.14 source -- the
+	 * kernel that boots this board off UFS today -- gives &ufsphy_mem exactly
+	 * that compatible, and drivers/phy/qualcomm/phy-qcom-ufs-qmp-v4.c carries a
+	 * different PHY revision's calibration.  Counting the {register, value}
+	 * pairs of the tables says the same thing: stock's phy-qcom-ufs-qmp-v3.h has
+	 * 88, this tree's phy-qcom-ufs-qmp-v3.h reproduces all 88,
+	 * phy-qcom-ufs-qmp-v4.h 33 and phy-qcom-ufs-qmp-v3-660.h 27.  Binding V4
+	 * meant two thirds of the QSERDES/PA trim registers were written for another
+	 * PHY -- a link that never trains, which is the silence this board keeps
+	 * producing.
+	 *
+	 * An earlier round put "qcom,ufs-phy-qmp-v4" here for a defensible but
+	 * wrong reason: capture 13 showed the node "enabled; unbound" with
+	 * "can_match: 0", and no *built* driver matched "qcom,ufs-phy-qmp-v3" --
+	 * because in this tree that file sits behind CONFIG_PHY_QCOM_UFS_V3_SM4350,
+	 * whose Kconfig prompt ("UFS Holi Phy Driver") names the board that shipped
+	 * with it, not the PHY it drives.  The right move was to enable the symbol,
+	 * which arch/arm64/configs/vendor/surya.config now does; picking a driver
+	 * whose table does not match the silicon was not.  The workflow gate now
+	 * checks the compatible against the of_match tables of the drivers actually
+	 * built, so the label cannot outvote the hardware again.
+	 *
+	 * Nothing else about the node changes.  reg-names = "phy_mem" feeds
+	 * platform_get_resource_byname(), #phy-cells = <0> is what the host's
+	 * of_phy_simple_xlate() needs, clock-names = "ref_clk_src", "ref_clk",
+	 * "ref_aux_clk" are the three ufs_qcom_phy_init_clks() looks up from
+	 * .init, "tx_iface_clk"/"rx_iface_clk" stay optional, and resets =
+	 * <&ufshc_mem 0> is acquired by this driver's init path.  The vdda-phy and
+	 * vdda-pll supplies remain absent on purpose: the vendor rpmh-regulator
+	 * registers those LDOs without making the child node its primary fwnode
+	 * device, so a phandle here parks the consumer silently (see the note on
+	 * &ufshc_mem); the -ENODATA tolerance in drivers/phy/qualcomm/phy-qcom-ufs.c
+	 * is what lets the driver treat "no supply" as "rail already up".
+	 */
+	compatible = "qcom,ufs-phy-qmp-v3";
+	status = "disabled";
+};
+
+&ufshc_mem {
+	/* Stock SDMMagpie uses the dedicated UFS_RESET pin, not GPIO 123. */
+	/delete-property/ reset-gpios;
+	/* Stock Surya UFS does not use the SM6150 boot fuse gate. */
+	/delete-property/ nvmem-cells;
+	/delete-property/ nvmem-cell-names;
+	/delete-property/ boot_device_type;
+	status = "disabled";
+};
+
+/* USB role detection requires the Surya PMIC and Type-C policy nodes. */
+&usb0 {
+	extcon = <&pm6150_pdphy>, <&pm6150_charger>;
+	status = "disabled";
+};
+
+&usb1 {
+	status = "disabled";
+};

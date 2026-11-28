@@ -23,6 +23,7 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/kthread.h>
 #include <linux/wait.h>
@@ -30,6 +31,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/pinctrl/devinfo.h>
 #include <linux/slab.h>
+#include <linux/sched/debug.h>
 
 #include "base.h"
 #include "power/power.h"
@@ -78,6 +80,128 @@ static void __device_set_deferred_probe_reason(const struct device *dev, char *r
 }
 
 /*
+ * Surya bring-up support.
+ *
+ * One driver that sleeps in its ->probe(), instead of returning
+ * -EPROBE_DEFER, is fatal here: deferred_probe_work_func() probes devices
+ * serially, deferred_probe_initcall() and wait_for_device_probe() both wait
+ * for that work, and first-stage init runs behind those waits.  That is the
+ * 2026-11-28 capture in full -- the probe worker (T65) printed "disp_cc-sm6150
+ * af00000.clock-controller: Registered DISP CC clocks" at 0.839582s, after
+ * apps_rsc drv@2 at 0.801626s and the RPMh regulator parents at 0.805-0.822s,
+ * and said nothing more; the only later lines are "workqueue lockup - pool
+ * cpus=6 ... in-flight: 65:deferred_probe_work_func BAR(1)" at 32s and 64s,
+ * with no "Registered GCC clocks", no "Freeing unused kernel memory" and no
+ * "Run /init".  The boot device was one step from working: at 0.643558s T1 had
+ * probed /soc/ufshc@1d84000 past all four "assuming enabled" rails and stopped
+ * at "ufshcd_init_clocks: core_clk clk get failed, -517" -- devm_clk_get("core")
+ * is answered by GCC, which the wedged pass never reached.
+ *
+ * So the deferred list holds the UFS host waiting for GCC, GCC waits for the
+ * RPMh ARC regulators that the wedged pass had in fact already brought up, and
+ * nobody is walking the list any more.  Three responses, all gated on this
+ * machine (compatible "xiaomi,surya" / "qcom,sm6150") so no other board changes
+ * behaviour, and none of them touching how drivers bind:
+ *
+ *  - drive the storage-critical provider chain from a kernel thread with
+ *    retries, in dependency order, instead of relying on the serial pass to
+ *    reach it -- the retry is what the UFS host needs and cannot ask for;
+ *  - bound both waits on deferred_probe_work, so a wedged driver costs a fixed
+ *    delay instead of the boot;
+ *  - name the device the pass is inside and dump that worker's stack, so the
+ *    next capture identifies the sleeping driver rather than guessing it from
+ *    the last line before the silence.
+ *
+ * All three were needed and they worked as designed, per the next capture
+ * (console-ramoops-10.txt): the chain bound /soc/rsc@18200000 and every
+ * interconnect provider, the waits expired instead of hanging, and Android's
+ * first stage finally ran -- "Freeing unused kernel memory" at 25.445s,
+ * "Run /init as init process", "init first stage started!", then
+ * "partition(s) not found ... metadata, super, vbmeta_system" and
+ * "Kernel panic - not syncing: Attempted to kill init! exitcode=0x00007f00"
+ * (init's 127 after its own 10 s partition poll).  No block device exists
+ * because the one device the chain could not finish is still holding it: the
+ * chain printed "r0 probing /soc/clock-controller@100000" at 1.257457s and
+ * never printed the result, and the pass was still queueing on that device
+ * mutex at 21.475s.  So gcc_sm6150_probe() sleeps with the device lock held,
+ * which was blamed on its mandatory vdd_cx_ao rail (see
+ * arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dts).
+ *
+ * That diagnosis was half right and the fix was not enough.  With the AO edge
+ * retargeted -- asserted on the flashed DTB, and captured 11 shows all three
+ * GCC supplies resolving to .../rpmh-regulator-cxlvl/regulator-pm6150-s1 and
+ * .../rpmh-regulator-mxlvl/regulator-pm6150-s3 -- console-ramoops-11.txt is
+ * still silent about GCC: "r0 probing /soc/clock-controller@100000" at
+ * 1.202755s, no result line, no "Registered GCC clocks" in the whole 0.08s to
+ * 21.49s the buffer still holds, and the watchdog's new holder dump printed
+ * "task:surya_chain_... state:R" instead of a sleeping stack.  The rest of
+ * that capture says what GCC is waiting for, though: /soc/ufshc@1d84000 had
+ * already been probed at 0.893865s and stopped at "ufshcd_init_clocks:
+ * core_clk clk get failed, -517", and /soc/ufsphy_mem@1d87000 sat at
+ * "can_match: 0" because its clocks are <&gcc 0x7c> and <&gcc 0x82>.  Every
+ * consumer of GCC defers; GCC itself defers on
+ * devm_regulator_get("vdd_cx"|"vdd_cx_ao"|"vdd_mx"), because the *class*
+ * devices behind those three phandles are the regulator children of
+ * rpmh-regulator-cxlvl/mxlvl, which the chain binds only at the parent level.
+ * A parent binding is not enough: rpmh-regulator creates its children with
+ * devm_regulator_register()/of_platform_populate() while
+ * driver_deferred_probe_enable is still false, so the children land on the
+ * deferred list -- behind GCC, which is the first entry the serial pass
+ * retries and the one that defers.  Hence two changes here: the arc regulator
+ * children are named in the chain so they bind in the round before GCC is
+ * retried, and GCC moved to the end of the list so a parked provider can no
+ *
+ * Capture 12 (console-ramoops-12.txt) then proved the children were worth
+ * binding -- "Surya gcc: vdd-cx", "vdd-cx-ao", "vdd-mx" all printed and there
+ * is no "Unable to get ... regulator" line anywhere in that boot -- and that
+ * the parking spot is one step later, and capture 13 narrowed it to a single
+ * instruction: "mapped" printed, so qcom_cc_map() succeeds, and the marker
+ * after the register writes that follow it did not.  Those writes front the
+ * camera/video MISC and AHB clock gates that the 4.14 driver keeps alive with
+ * its critical-clk list; 6.1's clk_disable_unused() gates them at late_initcall
+ * instead, so the first read of the GCC MISC space never returns and the CPU
+ * stops there -- no fault, no sleep, no stack, which is exactly the "state:R
+ * running task, stack:0" silence of captures 10 to 12 and the reason
+ * smp_send_stop() reports "failed to stop secondary CPUs" on the way out.  See
+ * the note in drivers/clk/qcom/gcc-sm6150.c; the writes are skipped on this
+ * board and clk_ignore_unused is on the command line for the same reason.
+ */
+static bool surya_bringup;
+static char surya_attempt[96] = "idle";
+static struct task_struct *surya_attempt_task;
+static atomic_t surya_attempt_busy = ATOMIC_INIT(0);
+/*
+ * The chain thread is normally the *holder* of the device mutex the serial pass
+ * is queueing behind, so the pass only shows where it waits and the chain shows
+ * why.  Both are needed: capture 10 named /soc/clock-controller@100000 as the
+ * device everything hung on, but not the function that sleeps, because only the
+ * waiting stack was printed.
+ */
+static struct task_struct *surya_chain_task;
+static bool surya_chain_settled;
+static char surya_chain_at[96] = "idle";
+
+static void surya_attempt_begin(struct device *dev)
+{
+	const char *node = dev->of_node ? of_node_full_name(dev->of_node) : NULL;
+
+	if (node)
+		snprintf(surya_attempt, sizeof(surya_attempt), "%s [%s]",
+			 node, dev_name(dev));
+	else
+		snprintf(surya_attempt, sizeof(surya_attempt), "%s", dev_name(dev));
+	WRITE_ONCE(surya_attempt_task, current);
+	smp_wmb();
+	atomic_set(&surya_attempt_busy, 1);
+}
+
+static void surya_attempt_end(void)
+{
+	atomic_set(&surya_attempt_busy, 0);
+	WRITE_ONCE(surya_attempt_task, NULL);
+}
+
+/*
  * deferred_probe_work_func() - Retry probing devices in the active list.
  */
 static void deferred_probe_work_func(struct work_struct *work)
@@ -122,7 +246,11 @@ static void deferred_probe_work_func(struct work_struct *work)
 		device_pm_move_to_tail(dev);
 
 		dev_dbg(dev, "Retrying from deferred list\n");
+		if (surya_bringup)
+			surya_attempt_begin(dev);
 		bus_probe_device(dev);
+		if (surya_bringup)
+			surya_attempt_end();
 		mutex_lock(&deferred_probe_mutex);
 
 		put_device(dev);
@@ -366,6 +494,356 @@ void deferred_probe_extend_timeout(void)
 	}
 }
 
+/*
+ * Surya first-stage init can exit before the normal deferred-probe timeout.
+ * The interconnect paths are the providers named by the UFS host's
+ * interconnects property; 0x1700000 is deliberately absent because SDMMagpie
+ * numbers that block aggre2 and this SoC has no node there -- an earlier
+ * capture listed it and the "missing; no platform device" line was read as a
+ * UFS supplier, which it never was.
+ */
+static const char * const surya_storage_paths[] = {
+	"/soc/ufshc@1d84000",
+	"/soc/ufsphy_mem@1d87000",
+	"/soc/interconnect@16e0000",
+	"/soc/interconnect@1500000",
+	"/soc/interconnect@9680000",
+	"/soc/interconnect@2",
+	"/soc/interconnect@1620000",
+	"/soc/clock-controller@100000",
+	"/soc/rsc@18200000",
+	"/soc/rsc@18200000/drv@2",
+	"/soc/rsc@18200000/drv@2/bcm_voter",
+	"/soc/rsc@18200000/drv@2/clock-controller",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-ldoa19",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-ldoa12",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-ldoc3",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-ldoa4",
+	"/soc/mailbox@17c00000",
+	"/soc/power-controller@c300000",
+};
+
+/*
+ * fw_devlink parks a consumer in silence while one of its supplier phandles
+ * points at a firmware node that never gains a struct device: the vendor RPMh
+ * regulator driver registers its LDOs with devm_regulator_register(), so the
+ * child device tree nodes have no primary fwnode device and the link from the
+ * consumer is never purged.  Print the supplier view for an unbound node so a
+ * stall names its blocker instead of leaving it to be guessed.
+ */
+static const struct {
+	const char *list;
+	const char *cells;
+} surya_supplier_lists[] = {
+	{ "clocks", "#clock-cells" },
+	{ "interconnects", "#interconnect-cells" },
+	{ "phys", "#phy-cells" },
+	{ "resets", "#reset-cells" },
+	{ "power-domains", "#power-domain-cells" },
+	{ "vdd-hba-supply", NULL },
+	{ "vcc-supply", NULL },
+	{ "vccq2-supply", NULL },
+	{ "qcom,vddp-ref-clk-supply", NULL },
+	{ "vdda-phy-supply", NULL },
+	{ "vdda-pll-supply", NULL },
+};
+
+static void surya_report_suppliers(struct device_node *con)
+{
+	int i, index;
+
+	for (i = 0; i < ARRAY_SIZE(surya_supplier_lists); i++) {
+		const char *list = surya_supplier_lists[i].list;
+		const char *cells = surya_supplier_lists[i].cells;
+
+		for (index = 0; ; index++) {
+			struct of_phandle_args args;
+			struct device_node *sup;
+			struct fwnode_handle *fwn;
+			struct device *sdev;
+
+			if (cells) {
+				if (of_parse_phandle_with_args(con, list, cells,
+								index, &args))
+					break;
+				sup = args.np;
+			} else {
+				sup = of_parse_phandle(con, list, index);
+				if (!sup)
+					break;
+			}
+
+			fwn = of_fwnode_handle(sup);
+			sdev = READ_ONCE(fwn->dev);
+			pr_notice("Surya storage snapshot: supplier %s[%d] -> %pOFn available:%d device:%d driver:%d\n",
+				  list, index, sup, of_device_is_available(sup),
+				  !!sdev, sdev ? !!READ_ONCE(sdev->driver) : 0);
+			of_node_put(sup);
+		}
+	}
+}
+
+static bool surya_storage_device(const struct device *dev)
+{
+	int i;
+
+	if (!dev->of_node)
+		return false;
+	for (i = 0; i < ARRAY_SIZE(surya_storage_paths); i++)
+		if (!strcmp(of_node_full_name(dev->of_node), surya_storage_paths[i]))
+			return true;
+	return false;
+}
+
+static void surya_snapshot(void)
+{
+	struct device_private *p;
+	struct device_node *np;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(surya_storage_paths); i++) {
+		const char *path = surya_storage_paths[i];
+		struct platform_device *pdev;
+		const char *state;
+
+		np = of_find_node_by_path(path);
+		pdev = np ? of_find_device_by_node(np) : NULL;
+		state = !np ? "missing" : !of_device_is_available(np) ?
+			"disabled" : "enabled";
+		pr_notice("Surya storage snapshot: %s %s; %s\n", path, state,
+			  !pdev ? "no platform device" :
+			  READ_ONCE(pdev->dev.driver) ? "driver assigned" : "unbound");
+		if (pdev) {
+			pr_notice("Surya storage snapshot: %s can_match: %d\n",
+				  path, pdev->dev.can_match);
+			if (!READ_ONCE(pdev->dev.driver))
+				surya_report_suppliers(np);
+			put_device(&pdev->dev);
+		}
+		of_node_put(np);
+	}
+
+	mutex_lock(&deferred_probe_mutex);
+	list_for_each_entry(p, &deferred_probe_pending_list, deferred_probe) {
+		if (surya_storage_device(p->device))
+			dev_notice(p->device, "Surya storage snapshot: deferred: %s\n",
+				   p->deferred_probe_reason ?: "reason unavailable");
+	}
+	mutex_unlock(&deferred_probe_mutex);
+}
+static void surya_ufs_snapshot(struct work_struct *work)
+{
+	surya_snapshot();
+}
+static DECLARE_DELAYED_WORK(surya_ufs_snapshot_work, surya_ufs_snapshot);
+
+/*
+ * Whether one deferred probe is currently in flight, and on which device.
+ * Returns true if the pass finished within the deadline.
+ */
+static bool surya_wait_probes(unsigned int secs)
+{
+	unsigned long deadline = jiffies + secs * HZ;
+
+	while (time_before(jiffies, deadline)) {
+		bool busy;
+
+		mutex_lock(&deferred_probe_mutex);
+		busy = !!work_busy(&deferred_probe_work) ||
+		       atomic_read(&surya_attempt_busy) ||
+		       !list_empty(&deferred_probe_active_list);
+		mutex_unlock(&deferred_probe_mutex);
+		if (!busy)
+			return true;
+		msleep(100);
+	}
+	return !work_busy(&deferred_probe_work) &&
+	       !atomic_read(&surya_attempt_busy);
+}
+
+static int surya_watchdog_cpu(void)
+{
+	/*
+	 * Never arm this on the CPU that might be stuck.  The point of the
+	 * watchdog is to fire while a *different* CPU is wedged inside a device
+	 * access, and a work item pinned to a wedged CPU simply never runs --
+	 * which is how the round after fb3fd29ca ended with an empty pstore: it
+	 * was armed on CPU 1, and CPU 1 is as likely as any other to be the
+	 * deferred-probe kworker's victim.  Nor is there a backstop: arm64 in
+	 * this tree selects neither HAVE_HARDLOCKUP_DETECTOR_PERF nor
+	 * HAVE_HARDLOCKUP_DETECTOR_ARCH, so HARDLOCKUP_DETECTOR cannot be
+	 * enabled, and a wedge with interrupts disabled is invisible to the
+	 * softlockup watchdog as well (its hrtimer has to run on that CPU) --
+	 * which is why softlockup_panic=1 is a convenience here and this work
+	 * item is the actual guarantee.
+	 *
+	 * CPU 0 is init's CPU.  Captures 12 and 13 show T1 printing at 4.84 s
+	 * and 14.88 s while the probe kworker was already stuck for seconds, so
+	 * the boot CPU stays responsive exactly when it matters.
+	 */
+	return cpu_online(0) ? 0 : raw_smp_processor_id();
+}
+
+static void surya_wedge_watchdog(struct work_struct *work);
+static DECLARE_DELAYED_WORK(surya_wedge_work, surya_wedge_watchdog);
+
+/*
+ * Nothing here changes what gets probed; it only says, out loud and into the
+ * pstore window, what the serial deferred pass is stuck on.  That is the
+ * difference between fixing the next driver and guessing at it.
+ */
+static void surya_wedge_watchdog(struct work_struct *work)
+{
+	static unsigned int rounds;
+
+	/*
+	 * Read the marker before the stack: if the probe returns while we are
+	 * dumping, surya_attempt goes stale underneath us, and a slightly
+	 * stale name is still the answer we came for.
+	 */
+	if (atomic_read(&surya_attempt_busy)) {
+		pr_notice("Surya bringup: deferred probe still in %s after %u s\n",
+			  surya_attempt, (rounds + 1) * 20);
+		if (surya_attempt_task)
+			sched_show_task(surya_attempt_task);
+		surya_snapshot();
+	}
+	/* The chain, separately: blocked in a probe, settled, or never started. */
+	if (READ_ONCE(surya_chain_task)) {
+		pr_notice("Surya bringup: provider chain blocked in %s\n",
+			  surya_chain_at);
+		sched_show_task(READ_ONCE(surya_chain_task));
+	} else if (!surya_chain_settled) {
+		pr_notice("Surya bringup: provider chain has not reached a probe\n");
+	} else {
+		pr_notice("Surya bringup: provider chain settled at %s\n",
+			  surya_chain_at);
+	}
+	if (++rounds < 3) {
+		/*
+		 * Three rounds of 20 s: long enough to sit past every bounded
+		 * wait in the pass (the 10 s probe wait and the 20 s chain wait)
+		 * and short enough that nobody reaches for the power key first --
+		 * and a power key here means a hard reset, dropped DDR, and no
+		 * capture at all.
+		 */
+		queue_delayed_work_on(surya_watchdog_cpu(), system_long_wq,
+				      &surya_wedge_work, 20 * HZ);
+		return;
+	}
+
+	/*
+	 * Final round and this board still has no storage provider.  Stop here
+	 * with a panic instead of letting the boot hang or let init reboot on its
+	 * own, for one reason: this is the only way a *capture* is guaranteed.
+	 * A hang produces no warm reboot, and the recovery that follows a held
+	 * power key is a hard reset, which drops DDR -- on 2026-11-28 23:5x that
+	 * cost a whole round with an empty /sys/fs/pstore and nothing to read.
+	 * A panic reboots through panic=5 (warm), the console content is already
+	 * in the prz, and "Surya bringup: ... -- see the rounds above" is the
+	 * last thing a reader sees.  It only fires while the chain never settled,
+	 * so a board that reaches /dev/disk/by-name never takes this path.
+	 */
+	if (!READ_ONCE(surya_chain_settled) || atomic_read(&surya_attempt_busy))
+		panic("Surya bringup: UFS provider chain never settled -- see the rounds above\n");
+
+	pr_notice("Surya bringup: watchdog finished with the chain settled; not panicking\n");
+}
+
+/*
+ * Providers first-stage init needs, in dependency order.  The serial deferred
+ * pass cannot be trusted to reach them (see above), so the chain is re-driven
+ * from a kernel thread with retries: a round either binds one more device or
+ * every remaining one returns -EPROBE_DEFER again and is retried after 100 ms.
+ * Doing this in a thread rather than in the initcall matters: if any provider
+ * here is the driver that sleeps forever, only this thread stalls.
+ */
+static const char * const surya_chain[] = {
+	"/soc/rsc@18200000",
+	"/soc/rsc@18200000/drv@2",
+	"/soc/rsc@18200000/drv@2/bcm_voter",
+	"/soc/rsc@18200000/drv@2/clock-controller",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-cxlvl",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-cxlvl/regulator-pm6150-s1",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-cxlvl/regulator-pm6150-s1-level-ao",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-mxlvl",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-mxlvl/regulator-pm6150-s3",
+	"/soc/rsc@18200000/drv@2/rpmh-regulator-mxlvl/regulator-pm6150-s3-level-ao",
+	"/soc/interconnect@2",
+	"/soc/interconnect@9680000",
+	"/soc/interconnect@1500000",
+	"/soc/interconnect@1620000",
+	"/soc/interconnect@16e0000",
+	"/soc/ufsphy_mem@1d87000",
+	"/soc/ufshc@1d84000",
+	/*
+	 * GCC last, not eleventh: console-ramoops-11.txt caught the round
+	 * parking on the clock controller and never reaching the storage pair
+	 * behind it, so a provider that parks must at least be the last thing
+	 * the round loses.  The workflow below (surya-dtb.yml) extracts every
+	 * quoted path from this list and checks it against the flashed DTB,
+	 * so keep prose here free of absolute node paths.
+	 */
+	"/soc/clock-controller@100000",
+};
+
+static DECLARE_COMPLETION(surya_chain_done);
+
+static int surya_chain_thread(void *unused)
+{
+	unsigned long deadline = jiffies + 20 * HZ;
+	int round = 0, i;
+	int bound = 0, last_bound = -1;
+
+	for (round = 0; time_before(jiffies, deadline) && bound != last_bound;
+	     round++) {
+		last_bound = bound;
+		bound = 0;
+
+		for (i = 0; i < ARRAY_SIZE(surya_chain); i++) {
+			struct device_node *np = of_find_node_by_path(surya_chain[i]);
+			struct platform_device *pdev;
+
+			if (!np)
+				continue;
+			pdev = of_find_device_by_node(np);
+			of_node_put(np);
+			if (!pdev)
+				continue;
+			if (pdev->dev.driver) {
+				bound++;
+			} else {
+				snprintf(surya_chain_at, sizeof(surya_chain_at),
+					 "%s", surya_chain[i]);
+				WRITE_ONCE(surya_chain_task, current);
+				pr_notice("Surya bringup: r%d probing %s\n",
+					  round, surya_chain[i]);
+				bus_probe_device(&pdev->dev);
+				if (pdev->dev.driver) {
+					bound++;
+					pr_notice("Surya bringup: r%d %s -> bound\n",
+						  round, surya_chain[i]);
+				} else {
+					pr_notice("Surya bringup: r%d %s -> still deferred\n",
+						  round, surya_chain[i]);
+				}
+			}
+			put_device(&pdev->dev);
+		}
+		msleep(100);
+	}
+	if (time_after_eq(jiffies, deadline))
+		pr_notice("Surya bringup: provider chain out of time at %s\n",
+			  surya_chain_at);
+	WRITE_ONCE(surya_chain_task, NULL);
+	surya_chain_settled = true;
+	surya_snapshot();
+	snprintf(surya_chain_at, sizeof(surya_chain_at), "done");
+	pr_notice("Surya bringup: provider chain pass finished\n");
+	complete(&surya_chain_done);
+	return 0;
+}
+
 /**
  * deferred_probe_initcall() - Enable probing of deferred devices
  *
@@ -375,13 +853,59 @@ void deferred_probe_extend_timeout(void)
  */
 static int deferred_probe_initcall(void)
 {
+	struct task_struct *chain;
+
+	if (of_machine_is_compatible("xiaomi,surya") ||
+	    of_machine_is_compatible("qcom,sm6150")) {
+		surya_bringup = true;
+		pr_notice("Surya bringup: armed (compatible xiaomi,surya=%d qcom,sm6150=%d)\n",
+			  of_machine_is_compatible("xiaomi,surya"),
+			  of_machine_is_compatible("qcom,sm6150"));
+		/*
+		 * system_long_wq, not system_wq: a wedged ->probe() starves the
+		 * per-CPU pool of the workqueue whose worker is stuck inside it,
+		 * and the 2026-11-28 capture lost the 4 s snapshot to exactly
+		 * that -- zero lines, where the same code had printed ten of them
+		 * one build earlier.  system_long_wq is the pool reserved for work
+		 * items that may block for a long time, and it is a separate pool
+		 * from the one deferred_probe_work runs on.
+		 */
+		queue_delayed_work_on(0, system_long_wq,
+				      &surya_ufs_snapshot_work, 4 * HZ);
+		queue_delayed_work_on(surya_watchdog_cpu(), system_long_wq,
+				      &surya_wedge_work, 20 * HZ);
+	}
+
 	debugfs_create_file("devices_deferred", 0444, NULL, NULL,
 			    &deferred_devs_fops);
+
+	if (surya_bringup) {
+		chain = kthread_run(surya_chain_thread, NULL, "surya_chain");
+		if (IS_ERR(chain))
+			complete(&surya_chain_done);
+	} else {
+		chain = ERR_PTR(-ENODEV);
+	}
 
 	driver_deferred_probe_enable = true;
 	driver_deferred_probe_trigger();
 	/* Sort as many dependencies as possible before exiting initcalls */
-	flush_work(&deferred_probe_work);
+	if (surya_bringup) {
+		/*
+		 * Give the provider chain a few seconds to reach the UFS host on
+		 * its own before the serial pass is waited on: the point is a
+		 * mounted root, not a tidy initcall ordering.
+		 */
+		if (!IS_ERR(chain) &&
+		    !wait_for_completion_timeout(&surya_chain_done,
+						 msecs_to_jiffies(4000)))
+			pr_notice("Surya bringup: provider chain still at %s after 4 s\n",
+				  surya_chain_at);
+		if (!surya_wait_probes(10))
+			pr_notice("Surya bringup: deferred pass still busy after 10 s, continuing init\n");
+	} else {
+		flush_work(&deferred_probe_work);
+	}
 	initcalls_done = true;
 
 	if (!IS_ENABLED(CONFIG_MODULES))
@@ -392,7 +916,16 @@ static int deferred_probe_initcall(void)
 	 * that is optional
 	 */
 	driver_deferred_probe_trigger();
-	flush_work(&deferred_probe_work);
+	if (surya_bringup) {
+		/*
+		 * Same reason as above: the second pass is a nicety, not a
+		 * licence for one driver's ->probe() to stop the boot.
+		 */
+		if (!surya_wait_probes(10))
+			pr_notice("Surya bringup: second deferred pass still busy, continuing init\n");
+	} else {
+		flush_work(&deferred_probe_work);
+	}
 
 	if (driver_deferred_probe_timeout > 0) {
 		schedule_delayed_work(&deferred_probe_timeout_work,
@@ -788,11 +1321,46 @@ int driver_probe_done(void)
  */
 void wait_for_device_probe(void)
 {
-	/* wait for the deferred probe workqueue to finish */
-	flush_work(&deferred_probe_work);
+	bool wedged = false;
 
-	/* wait for the known devices to complete their probing */
-	wait_event(probe_waitqueue, atomic_read(&probe_count) == 0);
+	if (surya_bringup) {
+		/*
+		 * One provider driver that sleeps instead of returning
+		 * -EPROBE_DEFER would otherwise stop first-stage init here
+		 * forever.  So: first wait for the storage provider chain to
+		 * settle, which is the wait that actually matters -- it ends
+		 * when /soc/ufshc@1d84000 is bound and a block device exists --
+		 * then give the serial pass a bounded grace period.  By then the
+		 * UFS host is either bound or it never will be, and waiting
+		 * longer changes nothing.
+		 */
+		if (!wait_for_completion_timeout(&surya_chain_done, 20 * HZ))
+			pr_notice("Surya bringup: provider chain still at %s after 20 s\n",
+				  surya_chain_at);
+		if (!surya_wait_probes(20)) {
+			pr_notice("Surya bringup: wait_for_device_probe() timed out with %s\n",
+				  surya_attempt);
+			if (!atomic_read(&probe_count))
+				async_synchronize_full();
+			return;
+		}
+		wedged = !wait_event_timeout(probe_waitqueue,
+					     atomic_read(&probe_count) == 0,
+					     20 * HZ);
+		if (wedged)
+			pr_notice("Surya bringup: %d device probe(s) still running\n",
+				  atomic_read(&probe_count));
+	} else {
+		/* wait for the deferred probe workqueue to finish */
+		flush_work(&deferred_probe_work);
+
+		/* wait for the known devices to complete their probing */
+		wait_event(probe_waitqueue, atomic_read(&probe_count) == 0);
+	}
+
+	if (wedged)
+		return;
+
 	async_synchronize_full();
 }
 EXPORT_SYMBOL_GPL(wait_for_device_probe);

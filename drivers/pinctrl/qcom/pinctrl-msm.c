@@ -581,6 +581,10 @@ static int msm_config_group_set(struct pinctrl_dev *pctldev,
 			msm_writel_io(val, pctrl, g);
 			raw_spin_unlock_irqrestore(&pctrl->lock, flags);
 
+			/* Dedicated output pads have no output-enable field. */
+			if (g->fixed_output)
+				continue;
+
 			/* enable output */
 			arg = 1;
 			break;
@@ -1693,6 +1697,7 @@ static int msm_gpio_init(struct msm_pinctrl *pctrl)
 	chip = &pctrl->chip;
 	chip->base = -1;
 	chip->ngpio = ngpio;
+	chip->skip_initial_direction = pctrl->soc->skip_initial_gpio_direction;
 	chip->label = dev_name(pctrl->dev);
 	chip->parent = pctrl->dev;
 	chip->owner = THIS_MODULE;

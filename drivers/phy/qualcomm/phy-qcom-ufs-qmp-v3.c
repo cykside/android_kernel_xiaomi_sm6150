@@ -3,6 +3,8 @@
  * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
+#include <linux/of.h>
+
 #include "phy-qcom-ufs-qmp-v3.h"
 
 #define UFS_PHY_NAME "ufs_phy_qmp_v3"
@@ -79,8 +81,16 @@ static int ufs_qcom_phy_qmp_v3_init(struct phy *generic_phy)
 		goto out;
 	}
 
-	/* Optional */
-	ufs_qcom_phy_get_reset(phy_common);
+	/* The host owns this provider; release it when the host exits the PHY. */
+	if (of_property_read_bool(phy_common->dev->of_node, "resets")) {
+		struct reset_control *reset;
+
+		reset = of_reset_control_get_exclusive_by_index(phy_common->dev->of_node, 0);
+		if (IS_ERR(reset))
+			return dev_err_probe(phy_common->dev, PTR_ERR(reset),
+					     "failed to acquire UFS PHY reset\n");
+		phy_common->ufs_reset = reset;
+	}
 
 out:
 	return err;
@@ -88,6 +98,10 @@ out:
 
 static int ufs_qcom_phy_qmp_v3_exit(struct phy *generic_phy)
 {
+	struct ufs_qcom_phy *phy_common = get_ufs_qcom_phy(generic_phy);
+
+	reset_control_put(phy_common->ufs_reset);
+	phy_common->ufs_reset = NULL;
 	return 0;
 }
 

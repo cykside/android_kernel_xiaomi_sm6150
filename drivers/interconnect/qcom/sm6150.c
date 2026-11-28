@@ -2245,6 +2245,9 @@ static int qnoc_sm6150_restore(struct device *dev)
 	struct platform_device *pdev = to_platform_device(dev);
 	struct qcom_icc_provider *qp = platform_get_drvdata(pdev);
 
+	if (qp->skip_qos)
+		return 0;
+
 	return qcom_icc_rpmh_configure_qos(qp);
 }
 

@@ -3450,84 +3450,201 @@ static void gcc_sm6150_fixup_sa6155(struct platform_device *pdev)
 	vdd_mx.cur_level = VDD_NUM_SA6155;
 }
 
+/*
+ * Do not retarget clock registers from the probe.
+ *
+ * Commit 41d0eeb38 ("clk: qcom: use SDMMagpie UFS clock offsets in the Surya
+ * trial") pointed halt_reg, hwcg_reg and clkr.enable_reg of the five UFS
+ * branches at 0x82024, 0x77038, 0x7708c, 0x77090 and 0x77094, and
+ * gcc_ufs_phy_phy_aux_clk_src.cmd_rcgr at 0x77098, because the board's stock
+ * DTB came from an SDMMagpie-based kernel.  The register map belongs to the
+ * SoC, not to the DTB, and both drivers that describe this SoC agree: this
+ * file and the 4.14 vendor gcc-sm6150.c put gcc_aggre_ufs_phy_axi_clk at
+ * 0x770c0, gcc_ufs_phy_axi_clk at 0x77010, gcc_ufs_phy_unipro_core_clk at
+ * 0x77040, gcc_ufs_phy_ice_core_clk at 0x77044, gcc_ufs_phy_phy_aux_clk at
+ * 0x77078 and gcc_ufs_phy_phy_aux_clk_src's CMD_RCGR at 0x7707c.  Not one of
+ * the six numbers the retargeting installed names a register of either
+ * driver: they are unimplemented GCC offsets.
+ *
+ * That was harmless for as long as nothing enabled those clocks -- the UFS
+ * host never got past "core_clk clk get failed, -517", so the enable path
+ * never ran.  Binding the QMP v4 PHY (6c013cafa) made clk_prepare_enable()
+ * run on a branch whose halt_reg points into unimplemented space, which is
+ * the same class of access that already stopped this CPU inside the GCC MISC
+ * writes: the CPU hangs inside the access with interrupts disabled, so no
+ * soft lockup is reported, and the reset that follows is a PON reset that
+ * drops the ramoops region, so the boot leaves no capture at all.  Five
+ * attempts on 47f1ca089 all came back with an empty /sys/fs/pstore.
+ *
+ * Deleting the retargeting is the fix, not a workaround: with the native
+ * offsets the enable is a clear of BIT(31) on a branch the bootloaders left
+ * running, which is what the 4.14 driver does on every boot of this phone.
+ * CI checks the five halt_reg values and forbids runtime assignment to them,
+ * so this cannot come back quietly.
+ */
+
+/*
+ * Surya bring-up: this probe is the single gate in front of
+ * /soc/ufshc@1d84000, and therefore in front of metadata, super and
+ * vbmeta_system, and three captures have been lost to the fact that none of
+ * its early failures is printed.  devm_regulator_get() answers
+ * -EPROBE_DEFER, the vendor code suppresses the message for exactly that
+ * errno, and the deferred pass restarts the probe in silence:
+ * console-ramoops-10.txt and console-ramoops-11.txt both end the same way --
+ * "r0 probing /soc/clock-controller@100000" with no result line, no
+ * "Registered GCC clocks", not even the "Rate ... greater than highest Fmax"
+ * errors that clock registration produces for dispcc in the same window.
+ * So on this machine only, name every step and never hide the errno.  The
+ * stage names are one short line each because the 2026-11-28 22:0x capture
+ * showed what a wrapped pstore console buffer does to a stack trace.
+ */
+static bool gcc_sm6150_surya;
+
+static void gcc_sm6150_stage(struct platform_device *pdev, const char *stage)
+{
+	if (gcc_sm6150_surya)
+		pr_notice("Surya gcc: %s\n", stage);
+}
+
+static struct regulator *gcc_sm6150_get_vdd(struct platform_device *pdev,
+					   const char *name)
+{
+	struct regulator *r = devm_regulator_get(&pdev->dev, name);
+
+	if (IS_ERR(r) && (gcc_sm6150_surya || PTR_ERR(r) != -EPROBE_DEFER))
+		dev_err(&pdev->dev, "Unable to get %s regulator (%ld)\n",
+			name, PTR_ERR(r));
+
+	return r;
+}
+
+
 static int gcc_sm6150_probe(struct platform_device *pdev)
 {
 	struct regmap *regmap;
 	int ret, is_sa6155;
 
-	vdd_cx.regulator[0] = devm_regulator_get(&pdev->dev, "vdd_cx");
-	if (IS_ERR(vdd_cx.regulator[0])) {
-		if (!(PTR_ERR(vdd_cx.regulator[0]) == -EPROBE_DEFER))
-			dev_err(&pdev->dev,
-				"Unable to get vdd_cx regulator\n");
+	gcc_sm6150_surya = of_device_is_compatible(pdev->dev.of_node,
+						   "xiaomi,surya-gcc");
+
+	gcc_sm6150_stage(pdev, "vdd-cx");
+	vdd_cx.regulator[0] = gcc_sm6150_get_vdd(pdev, "vdd_cx");
+	if (IS_ERR(vdd_cx.regulator[0]))
 		return PTR_ERR(vdd_cx.regulator[0]);
-	}
 
-	vdd_cx_ao.regulator[0] = devm_regulator_get(&pdev->dev, "vdd_cx_ao");
-	if (IS_ERR(vdd_cx_ao.regulator[0])) {
-		if (!(PTR_ERR(vdd_cx_ao.regulator[0]) == -EPROBE_DEFER))
-			dev_err(&pdev->dev,
-				"Unable to get vdd_cx_ao regulator\n");
+	gcc_sm6150_stage(pdev, "vdd-cx-ao");
+	vdd_cx_ao.regulator[0] = gcc_sm6150_get_vdd(pdev, "vdd_cx_ao");
+	if (IS_ERR(vdd_cx_ao.regulator[0]))
 		return PTR_ERR(vdd_cx_ao.regulator[0]);
-	}
 
-	vdd_mx.regulator[0] = devm_regulator_get(&pdev->dev, "vdd_mx");
-	if (IS_ERR(vdd_mx.regulator[0])) {
-		if (!(PTR_ERR(vdd_mx.regulator[0]) == -EPROBE_DEFER))
-			dev_err(&pdev->dev,
-				"Unable to get vdd_cx_ao regulator\n");
+	gcc_sm6150_stage(pdev, "vdd-mx");
+	vdd_mx.regulator[0] = gcc_sm6150_get_vdd(pdev, "vdd_mx");
+	if (IS_ERR(vdd_mx.regulator[0]))
 		return PTR_ERR(vdd_mx.regulator[0]);
-	}
+
 
 	is_sa6155 = of_device_is_compatible(pdev->dev.of_node,
 						"qcom,sa6155-gcc");
 	if (is_sa6155)
 		gcc_sm6150_fixup_sa6155(pdev);
 
+	gcc_sm6150_stage(pdev, "map");
 	regmap = qcom_cc_map(pdev, &gcc_sm6150_desc);
 	if (IS_ERR(regmap)) {
-		pr_err("Failed to map the gcc registers\n");
+		pr_err("Failed to map the gcc registers (%ld)\n", PTR_ERR(regmap));
 		return PTR_ERR(regmap);
 	}
+	gcc_sm6150_stage(pdev, "mapped");
 
 	/*
-	 * Disable the GPLL0 active input to MM blocks and GPU
-	 * via MISC registers.
+	 * Name the registers the UFS branches will actually be poked at, so the
+	 * next capture proves which table is live in the running kernel instead
+	 * of leaving it to git.  One short line on purpose: the pstore console
+	 * wraps a longer one.  Expect
+	 * "Surya gcc: ufs halt 770c0 77010 77044 77078 77040 src 7707c".
 	 */
-	regmap_update_bits(regmap, 0x0b084, BIT(0), BIT(0));
-	regmap_update_bits(regmap, 0x9b000, BIT(0), BIT(0));
+	if (gcc_sm6150_surya)
+		pr_notice("Surya gcc: ufs halt %05x %05x %05x %05x %05x src %05x\n",
+			  gcc_aggre_ufs_phy_axi_clk.halt_reg,
+			  gcc_ufs_phy_axi_clk.halt_reg,
+			  gcc_ufs_phy_ice_core_clk.halt_reg,
+			  gcc_ufs_phy_phy_aux_clk.halt_reg,
+			  gcc_ufs_phy_unipro_core_clk.halt_reg,
+			  gcc_ufs_phy_phy_aux_clk_src.cmd_rcgr);
 
 	/*
-	 * Keep clocks always enabled:
-	 *	gcc_camera_ahb_clk
-	 *	gcc_camera_xo_clk
-	 *	gcc_cpuss_gnoc_clk
-	 *	gcc_disp_ahb_clk
-	 *	gcc_disp_xo_clk
-	 *	gcc_gpu_cfg_ahb_clk
-	 *	gcc_video_ahb_clk
-	 *	gcc_video_xo_clk
+	 * None of the register writes below happen on Surya, and capture 13 is
+	 * what says so.
+	 *
+	 * The block is the SM8150 "keep clocks always enabled" list (camera /
+	 * disp / video ahb and xo clks, gpu_cfg_ahb, cpuss_gnoc) plus the two MISC
+	 * mask writes, and on SM6150 those numbers name different registers:
+	 * 0x48004 is gcc_cpuss_gnoc_clk's halt_reg/hwcg_reg, so BIT(0) there is
+	 * the halt-enable bit of the CPU subsystem's own GNOC branch.
+	 *
+	 * console-ramoops-13.txt walks the probe all the way to the first byte of
+	 * MMIO now.  Every regulator came back ("vdd-cx", "vdd-cx-ao", "vdd-mx"),
+	 * "map" printed, "mapped" printed -- qcom_cc_map() succeeds, so the node's
+	 * reg = <0x100000 0x1f0000> ioremap and devm_regmap_init_mmio() are both
+	 * fine -- and then nothing: "misc-skipped" would have been the next line
+	 * and never appeared, so the wedge is in these regmap_update_bits() calls,
+	 * starting with the very first read they perform (regmap_update_bits()
+	 * reads before it writes, and regmap's read here is __raw__ and
+	 * lockless because gcc_sm6150_regmap_config sets .fast_io).
+	 *
+	 * The failure mode is a CPU that never returns, not an oops: this boot has
+	 * no SError, no "Unable to handle", no call trace anywhere in 63 KB, the
+	 * kworker (T65) that owns the probe is still inside it when init gives up
+	 * ("deferred pass still busy after 10 s, continuing init"), and the reboot
+	 * path reports "SMP: failed to stop secondary CPUs 1-5", which
+	 * smp_send_stop() only prints for CPUs that failed to take an IPI within
+	 * one second -- i.e. CPUs stuck in a device access, not sleeping on a
+	 * mutex.  Everything else in the same capture is consistent: the chain
+	 * snapshot lists clock-controller@100000 as "enabled; driver assigned"
+	 * (bound, mid-probe) and reports "core_clk clk get failed, -517" for the
+	 * UFS host, which is the correct answer for a provider that has not
+	 * reached devm_of_clk_add_hw_provider() yet.
+	 *
+	 * Skipping costs nothing on the path to a mounted root: these bits mask
+	 * GPLL0 away from the MM blocks and hold camera / video / display / GPU
+	 * branch clocks ungated, and this branch has no consumer for any of them
+	 * -- the vendor GDSC nodes were retired in commit 1cac6c5f8 for the same
+	 * reason.  Re-adding any of them needs the MM island's supplier situation
+	 * solved first, and needs to say which of the offsets is actually alive on
+	 * this board: the capture proves one of them is not, not which one.
+	 * clk_restore_critical_clocks() repeats these offsets on resume; that path
+	 * stays untouched because it is unreachable until this board can suspend.
 	 */
-	regmap_update_bits(regmap, 0x0b008, BIT(0), BIT(0));
-	regmap_update_bits(regmap, 0x0b044, BIT(0), BIT(0));
-	regmap_update_bits(regmap, 0x48004, BIT(0), BIT(0));
-	regmap_update_bits(regmap, 0x0b00c, BIT(0), BIT(0));
-	regmap_update_bits(regmap, 0x0b048, BIT(0), BIT(0));
-	regmap_update_bits(regmap, 0x71004, BIT(0), BIT(0));
-	regmap_update_bits(regmap, 0x0b004, BIT(0), BIT(0));
-	regmap_update_bits(regmap, 0x0b040, BIT(0), BIT(0));
+	if (gcc_sm6150_surya) {
+		gcc_sm6150_stage(pdev, "misc-skipped");
+	} else {
+		regmap_update_bits(regmap, GCC_CAMERA_MISC, BIT(0), BIT(0));
+		regmap_update_bits(regmap, GCC_VIDEO_MISC, BIT(0), BIT(0));
 
+		regmap_update_bits(regmap, 0x0b008, BIT(0), BIT(0));
+		regmap_update_bits(regmap, 0x0b044, BIT(0), BIT(0));
+		regmap_update_bits(regmap, 0x48004, BIT(0), BIT(0));
+		regmap_update_bits(regmap, 0x0b00c, BIT(0), BIT(0));
+		regmap_update_bits(regmap, 0x0b048, BIT(0), BIT(0));
+		regmap_update_bits(regmap, 0x71004, BIT(0), BIT(0));
+		regmap_update_bits(regmap, 0x0b004, BIT(0), BIT(0));
+		regmap_update_bits(regmap, 0x0b040, BIT(0), BIT(0));
+	}
+
+	gcc_sm6150_stage(pdev, "dfs");
 	ret = qcom_cc_register_rcg_dfs(regmap, gcc_dfs_clocks,
 				       ARRAY_SIZE(gcc_dfs_clocks));
 	if (ret)
 		return ret;
 
+	gcc_sm6150_stage(pdev, "register");
 	ret = qcom_cc_really_probe(pdev, &gcc_sm6150_desc, regmap);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to register GCC clocks\n");
 		return ret;
 	}
 
+	gcc_sm6150_stage(pdev, "pm-ops");
 	ret = register_qcom_clks_pm(pdev, false, &gcc_sm6150_desc);
 	if (ret)
 		dev_err(&pdev->dev, "GCC failed to register for pm ops\n");
