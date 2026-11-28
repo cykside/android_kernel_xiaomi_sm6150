@@ -408,16 +408,32 @@ int ufs_qcom_phy_init_vregulators(struct ufs_qcom_phy *phy_common)
 {
 	int err;
 
+	/*
+	 * -ENODATA from ufs_qcom_phy_init_vreg() means "this node has no
+	 * <name>-supply phandle", which is how the Surya device tree is written on
+	 * purpose: the PM6150 LDOs the 4.14 driver points vdda-phy/vdda-pll at are
+	 * RPMh VRM children registered as regulator *class devices*, so no struct
+	 * device ever appears at that phandle and fw_devlink leaves the phy -- and
+	 * through it the UFS host -- deferred forever (commit 79e442b89, and the
+	 * note above &ufsphy_mem in surya-sm6150.dts).  A phy with no supply is a
+	 * phy whose rails stay as the bootloaders left them, and the boot LUN
+	 * hangs off VCC/VCCQ2 which the ABL already voted.  The three optional
+	 * vregs below were already ignored; it was only these two that aborted phy
+	 * init, which is how a board with a bound PHY still ends up with no
+	 * /dev/disk/by-name.
+	 */
 	err = ufs_qcom_phy_init_vreg(phy_common->dev, &phy_common->vdda_pll,
 		"vdda-pll");
-	if (err)
+	if (err && err != -ENODATA)
 		goto out;
 
 	err = ufs_qcom_phy_init_vreg(phy_common->dev, &phy_common->vdda_phy,
 		"vdda-phy");
 
-	if (err)
+	if (err && err != -ENODATA)
 		goto out;
+
+	err = 0;
 
 	ufs_qcom_phy_init_vreg(phy_common->dev, &phy_common->vddp_ref_clk,
 				     "vddp-ref-clk");
@@ -473,7 +489,14 @@ static int ufs_qcom_phy_enable_vreg(struct device *dev,
 {
 	int ret = 0;
 
-	if (!vreg || vreg->enabled)
+	/*
+	 * vreg->reg is NULL when the device tree carried no <name>-supply phandle
+	 * (see ufs_qcom_phy_init_vregulators).  ufs_qcom_phy_cfg_vreg() survives a
+	 * NULL regulator, but regulator_enable() is not an inline while
+	 * CONFIG_REGULATOR=y -- it dereferences regulator->rdev before it looks at
+	 * anything -- so the guard has to sit above both calls.
+	 */
+	if (!vreg || vreg->enabled || !vreg->reg)
 		goto out;
 
 	ret = ufs_qcom_phy_cfg_vreg(dev, vreg, true);
@@ -590,7 +613,8 @@ static int ufs_qcom_phy_disable_vreg(struct device *dev,
 {
 	int ret = 0;
 
-	if (!vreg || !vreg->enabled)
+	/* !vreg->reg: it was never enabled above, so there is nothing to undo. */
+	if (!vreg || !vreg->enabled || !vreg->reg)
 		goto out;
 
 	ret = regulator_disable(vreg->reg);

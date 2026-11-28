@@ -216,7 +216,33 @@
  * state.  Same reasoning as the removed vdd-hba-supply.
  */
 &ufsphy_mem {
-	compatible = "qcom,ufs-phy-qmp-v3";
+	/*
+	 * The "qcom,ufs-phy-qmp-v3" that used to be here is why storage could
+	 * never work, and capture 13 named it: the snapshot printed
+	 * "/soc/ufsphy_mem@1d87000 enabled; unbound" plus "can_match: 0", which is
+	 * what the driver core reports when no *built* driver's of_match_table
+	 * contains the node's compatible string.  No file in this tree matches
+	 * that one -- phy-qcom-ufs-qmp-v3.c does, but it is gated on
+	 * CONFIG_PHY_QCOM_UFS_V3_SM4350 (SM4350, not us), and what
+	 * CONFIG_PHY_QCOM_UFS_V3 actually builds is the SDM660 driver, which
+	 * matches "qcom,ufs-phy-qmp-v3-660".  SM6150's UFS PHY is QMP v4 (7nm, per
+	 * its own Kconfig help), so the string has to be the one
+	 * phy-qcom-ufs-qmp-v4.c carries -- CONFIG_PHY_QCOM_UFS_V4, default-on
+	 * under PHY_QCOM_UFS, already set in the resolved config.
+	 *
+	 * Nothing else about the node needs changing: it is already exactly what
+	 * that driver asks for.  reg-names = "phy_mem" feeds its
+	 * platform_get_resource_byname(), #phy-cells = <0> is what the host's
+	 * of_phy_simple_xlate() needs, and clock-names = "ref_clk_src", "ref_clk",
+	 * "ref_aux_clk" are the three names ufs_qcom_phy_init_clks() -- run from
+	 * this phy's .init -- looks up, with "tx_iface_clk"/"rx_iface_clk" already
+	 * optional.  Its vdda-phy/vdda-pll handling needed the -ENODATA tolerance
+	 * added in drivers/phy/qualcomm/phy-qcom-ufs.c, because the supply
+	 * properties must stay absent for the RPMh reason above; the "QMP v3 PHY
+	 * driver never asks for vdda-phy/vdda-pll" note below was true of the
+	 * driver we were not actually getting either way.
+	 */
+	compatible = "qcom,ufs-phy-qmp-v4";
 	status = "disabled";
 };
 

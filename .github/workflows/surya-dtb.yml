@@ -703,9 +703,16 @@ jobs:
             echo 'Surya pstore test requires download mode and panic watchdog bite disabled' >&2
             exit 1
           fi
-          for config in SM_GCC_6150 QCOM_CLK_RPMH QCOM_GDSC_REGULATOR QCOM_PDC SPMI_MSM_PMIC_ARB INTERCONNECT_QCOM_SM6150 PHY_QCOM_UFS_V3 SCSI_UFS_QCOM; do
+          for config in SM_GCC_6150 QCOM_CLK_RPMH QCOM_GDSC_REGULATOR QCOM_PDC SPMI_MSM_PMIC_ARB INTERCONNECT_QCOM_SM6150 SCSI_UFS_QCOM; do
             grep -Fx "CONFIG_${config}=y" out/surya/.config
           done
+          # SM6150's UFS PHY is the QMP v4 block; PHY_QCOM_UFS_V3 builds the
+          # SDM660 driver, which cannot bind /soc/ufsphy_mem@1d87000.
+          grep -Fx CONFIG_PHY_QCOM_UFS_V4=y out/surya/.config
+          if grep -Fxq CONFIG_PHY_QCOM_UFS_V3=y out/surya/.config; then
+            echo '::error::Surya must not build the SDM660 UFS PHY driver in place of the QMP v4 one'
+            exit 1
+          fi
           for config in PM_GENERIC_DOMAINS_OF ARM_PSCI_CPUIDLE_DOMAIN QCOM_RPMH INTERCONNECT_QCOM_BCM_VOTER; do
             grep -Fx "CONFIG_${config}=y" out/surya/.config
           done
@@ -926,6 +933,19 @@ jobs:
           fdtoverlay -i "$bundle/surya-base.dtb" -o dtb "$bundle/surya-ufs.dtbo"
           test "$(fdtget -t s dtb /soc/ufshc@1d84000 status)" = okay
           test "$(fdtget -t s dtb /soc/ufsphy_mem@1d87000 status)" = okay
+          # The PHY node must name a driver that is actually built: an inherited
+          # "qcom,ufs-phy-qmp-v3" string matches nothing here (that string belongs
+          # to the SM4350 driver behind PHY_QCOM_UFS_V3_SM4350), which left the
+          # node "enabled; unbound / can_match: 0" and the host without a PHY.
+          test "$(fdtget -t s dtb /soc/ufsphy_mem@1d87000 compatible)" = 'qcom,ufs-phy-qmp-v4'
+          if ! grep -q 'if (err && err != -ENODATA)' "$GITHUB_WORKSPACE/drivers/phy/qualcomm/phy-qcom-ufs.c"; then
+            echo '::error::phy-qcom-ufs must treat a missing *-supply property as "rail left as the bootloaders set it"'
+            exit 1
+          fi
+          if ! grep -qE 'if \(!vreg \|\| vreg->enabled \|\| !vreg->reg\)' "$GITHUB_WORKSPACE/drivers/phy/qualcomm/phy-qcom-ufs.c"; then
+            echo '::error::ufs_qcom_phy_enable_vreg() must guard a NULL regulator (regulator_enable() dereferences it)'
+            exit 1
+          fi
           host=/soc/ufshc@1d84000
           phy=/soc/ufsphy_mem@1d87000
           aggre=/soc/interconnect@16e0000
@@ -1047,7 +1067,14 @@ jobs:
             exit 1
           fi
           if ! grep -qE 'regmap_update_bits\(regmap, GCC_(CAMERA|VIDEO)_MISC' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c"; then
-            echo '::error::gcc_sm6150_probe() must keep the CAMERA/VIDEO MISC GPLL0 mask writes'
+            echo '::error::gcc_sm6150_probe() must keep the CAMERA/VIDEO MISC GPLL0 mask writes for non-Surya boards'
+            exit 1
+          fi
+          # ...but never on this board: the first GCC register access of the boot
+          # is the read regmap_update_bits() performs, and it wedged the CPU in
+          # console-ramoops-13.txt right after "Surya gcc: mapped".
+          if [ "$(awk '/gcc_sm6150_stage\(pdev, "misc-skipped"\)/ { print NR; exit }' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c")"                -ge "$(awk '/regmap_update_bits\(regmap, GCC_CAMERA_MISC/ { print NR; exit }' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c")" ]; then
+            echo '::error::the GCC MISC writes must sit after the misc-skipped marker, i.e. only in the non-Surya branch'
             exit 1
           fi
           if ! grep -q 'Surya gcc: ' "$GITHUB_WORKSPACE/drivers/clk/qcom/gcc-sm6150.c"; then

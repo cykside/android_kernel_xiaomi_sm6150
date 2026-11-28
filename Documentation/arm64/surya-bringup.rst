@@ -1791,3 +1791,63 @@ and the next thing to compare is the 4.14 node's ``reg`` size (0x30000) and its
 ``syscon``/``reg-names = "cc_base"`` split; and ``Registered GCC clocks`` without
 a SCSI probe behind it moves the whole question to the UFS host and PHY, which by
 now would be the first blocker in this boot that is not a clock provider.
+
+Capture 13, second half: the UFS PHY had no driver to bind at all
+------------------------------------------------------------
+
+The same capture answers the other half of the storage question, and the answer
+was in a line the bring-up snapshot had been printing for three rounds:
+
+.. code-block:: none
+
+  4.840009 Surya storage snapshot: /soc/ufsphy_mem@1d87000 enabled; unbound
+  4.840142 Surya storage snapshot: /soc/ufsphy_mem@1d87000 can_match: 0
+
+``can_match: 0`` on a node whose driver table is fine usually means a supplier
+never probed, and that was the reading until the ``compatible`` was checked
+against the tree: ``/soc/ufsphy_mem@1d87000`` carried
+``compatible = "qcom,ufs-phy-qmp-v3"``, and **no driver built in this
+configuration matches that string.**  ``phy-qcom-ufs-qmp-v3.c`` does match it,
+but it is gated on ``CONFIG_PHY_QCOM_UFS_V3_SM4350`` (SM4350), while
+``CONFIG_PHY_QCOM_UFS_V3=y`` -- what the fragment had -- builds
+``phy-qcom-ufs-qmp-v3-660.c``, whose table says
+``"qcom,ufs-phy-qmp-v3-660"`` (SDM660).  A platform device with no matching
+driver is never queued for the deferred pass, never probed, and never reports a
+reason; it just stays unbound, which is why this looked like a dependency
+problem for three captures.
+
+SM6150's UFS PHY is the 7nm QMP v4 block -- ``phy-qcom-ufs-qmp-v4.c``,
+``CONFIG_PHY_QCOM_UFS_V4``, which ``PHY_QCOM_UFS`` defaults on and the resolved
+config already carried.  Its match string is ``"qcom,ufs-phy-qmp-v4"``, so the
+node needs that one property and nothing else: ``reg-names = "phy_mem"`` is what
+its ``platform_get_resource_byname()`` asks for, ``#phy-cells = <0>`` is what the
+host's ``of_phy_simple_xlate()`` needs, and its ``.init`` looks up exactly the
+three names the node already lists (``ref_clk_src``, ``ref_clk``, ``ref_aux_clk``,
+with ``tx/rx_iface_clk`` optional).
+
+One more thing was wrong underneath it.  ``ufs_qcom_phy_init_vregulators()``
+returned the ``-ENODATA`` that ``ufs_qcom_phy_init_vreg()`` produces for a node
+without a ``<name>-supply`` phandle, and treated it as fatal for the first two
+rails -- so binding the driver would have failed at ``phy_init()`` with
+``ufs_qcom_phy_init_vregulators() failed -61`` on any device tree that omits the
+supplies, which ours must keep omitting (the RPMh VRM LDOs are regulator class
+devices, so a phandle there parks the host in permanent deferral; see
+commit 79e442b89).  The core now treats ``-ENODATA`` as "no supply, rail stays as
+the bootloaders left it", the way the UFS host's own ``ufshcd_populate_vreg()``
+has always done, and it is what the three optional vregs already did.  Because
+``regulator_enable()`` is a real function while ``CONFIG_REGULATOR=y`` and
+dereferences ``regulator->rdev`` before anything else, the enable and disable
+paths also gained the ``!vreg->reg`` guard -- without it the missing supply would
+have turned a probe failure into a NULL dereference inside ``phy_power_on()``.
+
+The workflow now pins all of it: the packaged DTB must declare
+``qcom,ufs-phy-qmp-v4`` on the PHY node, the resolved config must carry
+``CONFIG_PHY_QCOM_UFS_V4=y`` and must *not* build the SDM660 driver, the PHY core
+must keep the ``-ENODATA`` tolerance and the NULL-regulator guards, and the two
+GCC MISC writes must live only in the non-Surya branch.  What capture 14 has to
+show is the whole chain in order: ``Surya gcc: misc-skipped`` -> ``dfs`` ->
+``register`` -> ``Registered GCC clocks`` -> the host's deferred retry getting a
+real ``core_clk`` -> ``scsi 0:0:0:0: Attached scsi generic sg0`` ->
+``init: Mounted /vendor``.  If the PHY line in the snapshot changes to
+``enabled; driver assigned`` but the host still reports ``-517``, the provider
+ordering -- not the PHY -- is what is left.
