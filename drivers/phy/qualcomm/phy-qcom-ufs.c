@@ -117,6 +117,29 @@ struct ufs_qcom_phy *get_ufs_qcom_phy(struct phy *generic_phy)
 }
 EXPORT_SYMBOL(get_ufs_qcom_phy);
 
+/*
+ * Surya bring-up: one switch that separates "a driver has to exist for this
+ * node" from "the PHY's own register programming is what stops this board".
+ * With surya_phy=stub every access this driver makes to the QMP block lands in
+ * RAM instead of the hardware: the region is still ioremapped (so it stays
+ * claimed and the error paths are unchanged) but the pointer the driver uses
+ * is swapped for a zeroed buffer of the same size.  Clocks, regulators and the
+ * host-side reset toggle keep running, so the only variable that moves is the
+ * readl()/writel() pair against phy->mmio -- which covers ufs_qcom_phy_write_tbl(),
+ * the calibration tables, UFS_PHY_SW_RESET, UFS_PHY_PHY_START and the
+ * UFS_PHY_PCS_READY_STATUS poll in one place.  Default is the untouched
+ * behaviour: real hardware access.  Both modes print which one is live, because
+ * a capture that does not name its own mode is worth half as much.
+ */
+static bool surya_phy_stub;
+
+static int __init surya_phy_setup(char *str)
+{
+	surya_phy_stub = !strcmp(str, "stub");
+	return 1;
+}
+__setup("surya_phy=", surya_phy_setup);
+
 static
 int ufs_qcom_phy_base_init(struct platform_device *pdev,
 			   struct ufs_qcom_phy *phy_common)
@@ -133,6 +156,29 @@ int ufs_qcom_phy_base_init(struct platform_device *pdev,
 		dev_err(dev, "%s: ioremap for phy_mem resource failed %d\n",
 			__func__, err);
 		return err;
+	}
+
+	dev_notice(dev, "Surya phy: mode=%s\n",
+		   surya_phy_stub ? "stub" : "hardware");
+
+	if (surya_phy_stub) {
+		size_t map_size = PAGE_ALIGN(resource_size(res));
+		void *scratch;
+
+		/*
+		 * The driver's whole access window is COM_BASE..PHY_BASE+PHY_SIZE,
+		 * which the DT sizes to exactly 0xe00 here (PAGE_ALIGN keeps the
+		 * buffer at least as wide as the mapping it replaces).
+		 */
+		scratch = devm_kzalloc(dev, map_size, GFP_KERNEL);
+		if (!scratch) {
+			phy_common->mmio = NULL;
+			return -ENOMEM;
+		}
+
+		phy_common->mmio = (__force void __iomem *)scratch;
+		dev_notice(dev, "Surya phy: mode=stub, mmio -> %zu KiB RAM, PHY registers untouched\n",
+			   map_size >> 10);
 	}
 
 	return 0;

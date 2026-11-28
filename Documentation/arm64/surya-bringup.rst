@@ -1983,3 +1983,52 @@ programming is what dies".  Also check the first line of any capture for
 ``Linux version 6.1.177-surya-g<sha>``: two adjacent builds here differ only in
 that suffix, and reasoning about a flash whose ``Linux version`` was never read
 is how a wrong theory survives a round trip.
+
+Separating "a PHY driver exists" from "the PHY may touch hardware"
+------------------------------------------------------------------
+
+The round above changed two things at once: it bound the QMP v4 driver, and it
+let that driver enable clocks and program the QMP block.  With the register map
+fixed, the clock enables are no longer suspect -- ``clk_prepare_enable()`` on
+those five branches now writes the offsets both SM6150 drivers agree on -- so the
+one remaining unknown is whether a ``readl()``/``writel()`` against the QMP
+registers themselves is what stops this CPU.  That question is answered by a
+command-line switch, not by a rebuild: ``drivers/phy/qualcomm/phy-qcom-ufs.c``
+parses ``surya_phy=stub`` (``__setup``, so it is consumed before any probe and
+never lands in init's environment) and in that mode swaps ``phy_common->mmio``
+-- which is the single pointer every PHY access goes through, including
+``ufs_qcom_phy_write_tbl()``, the calibration tables, ``UFS_PHY_SW_RESET``,
+``UFS_PHY_PHY_START`` and the ``UFS_PHY_PCS_READY_STATUS`` poll -- for a zeroed
+``devm_kzalloc`` buffer of ``PAGE_ALIGN(resource_size(res))``.  The region is
+still ioremapped first, so it stays claimed and no error path changes; the
+driver still probes, binds, enables its clocks and votes its (absent, hence
+"already up") regulators, and the host still toggles the PHY soft reset through
+its own reset controller.
+
+The buffer size is not arbitrary: ``COM_BASE`` 0x000 to ``PHY_BASE + PHY_SIZE``
+0xc00 + 0x200 = 0xe00 is the whole window this driver touches, which is exactly
+``reg = <0x1d87000 0xe00>`` in ``sm6150.dtsi``, so no access can run past the
+substitute either.
+
+Probe prints the mode in both cases, because a capture that cannot say which
+mode it ran in is worthless::
+
+    qcom-ufs-qmp-v4 1d87000.ufsphy_mem: Surya phy: mode=hardware
+    qcom-ufs-qmp-v4 1d87000.ufsphy_mem: Surya phy: mode=stub
+
+Default is ``mode=hardware`` and nothing sets the parameter: the boot we mean as
+a real attempt must not be a measurement.  CI enforces that the parser and the
+mode line exist and that no bootargs source (``surya-sm6150.dts``,
+``tools/surya-anykernel/anykernel.sh``, ``boot-test.sh``) mentions
+``surya_phy=``; when a round is deliberately run as ``mode=stub``, that gate is
+removed in the same commit, with a line here saying why.
+
+What each answer means: ``mode=hardware`` boots or dies silently exactly as
+before this switch existed, so it is the round that tests the register-map fix.
+If that round still leaves nothing in ``/sys/fs/pstore``, adding
+``surya_phy=stub`` to the installer's ``patch_cmdline`` list is a one-line change
+that keeps the driver bound while writing nothing to the QMP block.  A stub round
+that *does* leave a capture localises the death to PHY register access, which is
+the boundary past which the block must be powered, reset or clocked before it may
+be written -- and the capture then shows whether the host reached
+``ufshcd_hba_enable()`` with a real errno, which is the thing to fix next.

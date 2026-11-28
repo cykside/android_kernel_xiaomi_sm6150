@@ -946,6 +946,30 @@ jobs:
             echo '::error::ufs_qcom_phy_enable_vreg() must guard a NULL regulator (regulator_enable() dereferences it)'
             exit 1
           fi
+          # "A driver has to exist for the PHY node" and "the PHY's hardware
+          # programming is safe on this board" are different claims that one flash
+          # used to test at once.  surya_phy=stub keeps the driver bound, the clocks
+          # enabled and the host-side reset toggled, and diverts every access to
+          # phy->mmio into a RAM buffer, so the two can be separated without
+          # rebuilding the driver.  It must default to hardware -- flipping it is a
+          # deliberate one-line change to the bootargs, never an accident -- and both
+          # modes have to name themselves, because a capture that cannot say which
+          # mode it ran in is worth half as much.
+          if ! grep -q '__setup("surya_phy=",' "$GITHUB_WORKSPACE/drivers/phy/qualcomm/phy-qcom-ufs.c"; then
+            echo '::error::phy-qcom-ufs must keep the surya_phy= stub switch (see Documentation/arm64/surya-bringup.rst)'
+            exit 1
+          fi
+          if ! grep -q 'Surya phy: mode=%s' "$GITHUB_WORKSPACE/drivers/phy/qualcomm/phy-qcom-ufs.c"; then
+            echo '::error::the UFS PHY must print mode=stub or mode=hardware at probe, or a capture cannot be interpreted'
+            exit 1
+          fi
+          for f in tools/surya-anykernel/boot-test.sh tools/surya-anykernel/anykernel.sh \
+                   arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dts; do
+            if grep -q 'surya_phy' "$GITHUB_WORKSPACE/$f"; then
+              echo "::error::$f sets surya_phy=; a boot meant as a real attempt must run mode=hardware (remove this gate with the .rst entry that explains the flip)"
+              exit 1
+            fi
+          done
           host=/soc/ufshc@1d84000
           phy=/soc/ufsphy_mem@1d87000
           aggre=/soc/interconnect@16e0000
