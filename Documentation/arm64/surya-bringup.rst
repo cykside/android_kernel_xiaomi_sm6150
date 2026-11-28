@@ -2381,3 +2381,99 @@ did not.  Two consequences:
 This is why the ramoops node is now derived in ``.dts`` text and gated rather than
 tuned: the whole defect was "sizes copied from a kernel whose layout order differs",
 and the gate re-derives ``start``/``size`` from the same arithmetic the driver uses.
+
+Why capture 14 came back as 14 KiB of binary
+--------------------------------------------
+
+The prediction in the section above -- that a second writer over the console prz
+produces a header whose ``start``/``size`` pair disagrees -- is now measured, not
+derived, and the mechanism is the pstore *console* rather than the pmsg prz.
+
+The board was reflashed with the derived node (reg ``0x240000`` at ``0x9d800000``,
+record ``0x80000``, console ``0x40000``, pmsg ``0``, ecc ``0``, ``no-map``) and came
+back with ``console-ramoops-14.txt``: 14225 bytes, 38 % printable, ``strings -n 14``
+finding no line, no ``Linux version`` and no ``Surya bringup`` marker.  It is not an
+empty boot::
+
+  [    0.227028] pstore: using zlib compression
+  [    0.227539] console [pstore0] enabled
+  [    0.227610] ramoops: attached 0x400000@0x9d800000, ecc: 0/0
+  [   37.349573] audit(1795861901.239:2735): avc: denied { read } for comm="recovery"
+                 name="/" dev="pstore" tcontext=u:object_r:pstorefs:s0 permissive=1
+
+Those lines are the ``dmesg`` of the boot that *read* the log, not of the boot under
+test -- ``twrp-current-dmesg.txt`` is recovery's own ring, which is why the
+collector says so out loud.  Two things follow from ``console [pstore0] enabled``
+at 0.227 s, and both were invisible to the earlier reasoning:
+
+* the same 6.1 kernel boots twice -- once as the image under test, once as the
+  recovery kernel that copies the log out -- and the second boot registers the
+  pstore console, which ``register_console()`` answers by *untethering* our
+  ``earlycon``.  Every line after 0.227 s of the boot under test is at risk, and
+  the reading boot then starts writing its own console records into the very prz
+  the earlycon owns;
+* with ``CONFIG_PSTORE_COMPRESS=y`` and ``PSTORE_DEFLATE_COMPRESS_DEFAULT=y`` those
+  records are DEFLATE.  ``prz->buffer->start`` keeps advancing from the reading
+  boot's writes, so the reader linearises a rotated ring whose first half is the
+  end of somebody's compressed stream.  Brute-force inflate at every offset
+  (wbits 15, -15, 9, -9, with ``flush()``) returns at most 103 bytes of ``0x30``
+  filler -- consistent with a rotated stream, which no single-offset decode can
+  recover.
+
+The fix is in the node, not in the earlycon.  ``console-size = <0>`` means
+``PSTORE_FLAGS_CONSOLE`` is never set (``fs/pstore/ram.c`` sets it only
+``if (cxt->console_size)``, and ``pstore_register()`` calls
+``pstore_register_console()`` only under that flag), so there is no
+``console [pstore0]``, no takeover, and no second writer.  The log zone becomes
+the *pmsg* prz -- ``pmsg-size = <0x40000>`` -- which is the one prz this driver
+never writes on its own: its only producer is ``/dev/pmsg0`` from userspace, and
+recovery init never opens it.  The address does not move: with the same reg and
+record-size, ``dump_mem_sz`` is still ``0x200000``, still four przs of
+``0x80000``, so the last zone still starts at ``0x9da00000`` -- exactly the
+``earlycon=ramoops,0x9da00000,0x40000`` the installer patches, and exactly the
+window the recovery calls ``pmsg`` (``0x9da00000 + 0x200000`` in the stock map),
+which is why both reader families export it.  Earlier rounds confirm the channel:
+``pstore-mount-3.txt`` and ``pstore-mount-4.txt`` list ``pmsg-ramoops-0`` at 23467
+and 187743 readable bytes next to a ``console-ramoops-0`` that was the *reader's*
+own 234520-byte log.
+
+The gate in ``.github/workflows/surya-dtb.yml`` now re-derives the pmsg address
+(``base + cnt * zone + console-size + ftrace-size``, the order
+``ramoops_probe()`` initialises przs in), requires the console prz to be absent,
+and rejects any earlycon zone outside the recovery's pmsg window.  The collector
+(``tools/surya-anykernel/collect-logs.sh``) writes ``pstore-index.txt``, a
+per-file printable-ratio line, so the next unreadable capture is identified by the
+bundle itself instead of by a round of guessing.
+
+The same reasoning changed ``drivers/tty/serial/earlycon-ramoops.c``: it no longer
+resets ``start``/``size`` at setup when the header already carries
+``PERSISTENT_RAM_SIG`` and describes a ring no larger than this zone, and it writes
+one line at the start of every boot::
+
+  ==== surya earlycon, new boot: Linux version 6.1.177-surya-g<sha> (...)
+
+Both exist because this device has no separate recovery kernel -- the TWRP
+environment that copies the log out runs the same Image with the same cmdline, so a
+per-boot reset destroyed the log of the boot under test 0.2 s before it could be
+read, and every capture in this bring-up has been the *reader's* log.  Appending
+costs a ring shared by a few boots (the banner splits them again, and names the
+build, which is also the check against flashing a stale tree); it buys a view of a
+boot that dies before the reboot, which is the boot that matters here.  A header
+that looks foreign -- wrong signature, size past capacity, ``start > size`` -- is
+still reset, because that is the pair a pstore reader calls invalid and erases.
+
+The mechanism that makes the preserved header enough is in ``fs/pstore/ram_core.c``:
+``persistent_ram_post_init()`` of the *reading* boot finds our signature with a
+consistent cursor, calls ``persistent_ram_save_old()`` (which copies the ring into
+``prz->old_log``) and only then lets ``PRZ_FLAG_ZAP_OLD`` reset the live cursor.
+``ramoops_get_next_prz()`` exports a prz exactly when ``persistent_ram_old_size()``
+is non-zero, and ``ramoops_pstore_read()`` walks dmesg, console, pmsg, ftrace in
+that order without filtering on the requested type, so the file name follows the
+prz that had data: our zone becomes ``pmsg-ramoops-0``.  Resetting the header in the
+earlycon instead skipped all of that -- ``post_init()`` saw ``size == 0 && start ==
+0``, printed "found existing empty buffer" and returned *before* ``save_old()``, so
+the previous boot's text was never copied anywhere and only the reader's own log
+survived.
+
+What capture 14 does *not* say is how far the kernel got.  It constrains nothing
+about UFS, GCC or the PHY, and it must not be read as "the kernel printed nothing".

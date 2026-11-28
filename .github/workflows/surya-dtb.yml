@@ -67,7 +67,7 @@ jobs:
           # address the earlycon must be aimed at is a derived quantity
           # (ramoops_probe lays the dmesg przs out first), so it is checked
           # only where it is derived -- in the zip-assembling step, which
-          # recomputes console-prz start/size from this same node.  This
+          # recomputes the pmsg-prz address and ring from this same node.  This
           # step used to restate 'reg = 0 9d800000 0 400000' and
           # console-size 100000 as literals; those four lines then sat
           # quietly stale for four builds, passing while the earlycon aimed
@@ -1089,15 +1089,18 @@ jobs:
           fi
           ramoops_properties=$(fdtget -p dtb /reserved-memory/ramoops@9d800000)
           grep -qx no-map <<< "$ramoops_properties"
-          # The earlycon and the pstore console prz must land on one and the same
-          # ring, with the same capacity, and with no third writer.  Deriving the
+          # The earlycon and the pstore pmsg prz must land on one and the same
+          # ring, with the same capacity, and with no other writer.  Deriving the
           # address from the DT is the only way to know: ramoops_probe() consumes
           # the whole leftover for the dmesg przs (zone_sz = dump_mem_sz / cnt, not
-          # record-size), so the console prz moves whenever any size changes, and
-          # a console prz that does not fit inside reg fails the whole probe.
-          # See Documentation/arm64/surya-bringup.rst: the 2026-11-27 20:16 report
-          # read "found existing invalid buffer, size 57821, start 192977" because
-          # the pmsg prz shared the earlycon's header at 0x9da00000.
+          # record-size), so the last prz moves whenever any size changes, and a
+          # prz that does not fit inside reg fails the whole probe.
+          # See Documentation/arm64/surya-bringup.rst for both failure modes this
+          # gate encodes: the 2026-11-27 20:16 report read "found existing invalid
+          # buffer, size 57821, start 192977" while two owners shared one header,
+          # and console-ramoops-14.txt was 14225 bytes of zlib because a
+          # registered pstore console (console [pstore0] at 0.227 s) wrote its own
+          # compressed records into the ring the next boot came to read.
           python3 - <<'PYEOF'
           import os, re, subprocess, sys
 
@@ -1106,7 +1109,12 @@ jobs:
           # fdtget -t x prints unprefixed hex ("9d800000"), which int(tok, 0) rejects,
           # and some builds print "0x9d800000", which int(tok, 16) accepts.  Parse both.
           def num(tok):
-              return int(tok[2:], 16) if tok[:2].lower() == "0x" else int(tok, 16)
+              try:
+                  return int(tok[2:], 16) if tok[:2].lower() == "0x" else int(tok, 16)
+              except ValueError:
+                  sys.exit("ramoops geometry: %r is not a hex number -- fdtget -t x on "
+                           "%s returned the wrong thing, so nothing derived from it "
+                           "means anything" % (tok, NODE))
 
           def prop(name, default=None):
               out = subprocess.run(["fdtget", "-t", "x", "dtb", NODE, name],
@@ -1115,10 +1123,17 @@ jobs:
                   if default is None:
                       sys.exit("%s has no %s: %s" % (NODE, name, out.stderr.strip()))
                   return default
+              if not out.stdout.split():
+                  sys.exit("%s: property %s is present but empty, so no size can be "
+                           "read from it" % (NODE, name))
               return num(out.stdout.split()[0])
 
           region = subprocess.run(["fdtget", "-t", "x", "dtb", NODE, "reg"],
                                   capture_output=True, text=True).stdout.split()
+          if len(region) < 2:
+              sys.exit("%s: fdtget found no usable reg property (%r) -- the node or the "
+                       "dtb is missing, so every derived address below would be a guess"
+                       % (NODE, region))
           # #address-cells/#size-cells are 2 here: "0 9d800000 0 240000",
           # so the low halves are the third and the last token.
           if len(region) >= 4:
@@ -1144,32 +1159,40 @@ jobs:
           dump = size - console - ftrace - pmsg
           cnt = dump // record if record else 0
           zone = (dump // cnt) & ~1 if cnt else 0
-          caddr = base + cnt * zone
 
           fail = []
           if not cnt:
               fail.append("no dmesg prz fits (dump 0x%x / record 0x%x)" % (dump, record))
           if cnt * zone + console + ftrace + pmsg > size:
               fail.append("przs run past reg; ramoops_init_prz() would fail the probe")
-          if caddr != ec_addr:
-              fail.append("console prz lands at 0x%x but the earlycon writes 0x%x" % (caddr, ec_addr))
+          # ramoops_probe() calls ramoops_init_prz() for console, then fprzs, then
+          # pmsg, each advancing paddr by its own size -- so the pmsg prz starts here.
+          paddr = base + cnt * zone + console + ftrace
+          if console:
+              fail.append("console-size 0x%x registers the pstore console: it untethers "
+                          "the earlycon ~0.2 s into every boot, and the reading boot's "
+                          "own compressed records land in the ring we came to read "
+                          "(console-ramoops-14.txt, 14225 B of zlib)" % console)
+          if paddr != ec_addr:
+              fail.append("pmsg prz lands at 0x%x but the earlycon writes 0x%x"
+                          % (paddr, ec_addr))
+          if paddr < base + cnt * zone:
+              fail.append("pmsg prz at 0x%x overlaps the dmesg przs (0x%x..0x%x)"
+                          % (paddr, base, base + cnt * zone))
           if ecc:
               fail.append("ecc-size %d: prz capacity stops matching the earlycon ring, "
                           "and the recovery reader parses ecc 0/0" % ecc)
-          if pmsg:
-              fail.append("pmsg-size 0x%x: a second writer on a prz header is what makes "
-                          "start > size, and 4.14 erases a zone it calls invalid" % pmsg)
           # prz->buffer_size = zone - 12 (ram_core.c) and earlycon-ramoops uses zone - 12.
-          if console != ec_size:
-              fail.append("console prz 0x%x != earlycon zone 0x%x: two capacities on one "
-                          "header" % (console, ec_size))
+          if pmsg != ec_size:
+              fail.append("pmsg prz 0x%x != earlycon zone 0x%x: two capacities on one "
+                          "header" % (pmsg, ec_size))
           if ec_size > 0x40000:
               fail.append("earlycon zone 0x%x exceeds one early_ioremap (256K)" % ec_size)
           # Cross-check against the reader: the recovery inherits the stock 4.14
           # map (sdmmagpie.dtsi: reg 0x400000, record 0x80000, pmsg 0x200000,
-          # console 0x100000), so its pmsg prz starts where ours must write, and
-          # its dmesg przs are 0x80000 each.  Any zone the recovery considers
-          # oversized or torn gets zap()ped, not exported.
+          # console 0x100000), so its pmsg prz is the zone we write, and its dmesg
+          # przs are 0x80000 each.  Any zone the recovery considers oversized or
+          # torn gets zap()ped, not exported.
           STOCK = dict(size=0x400000, record=0x80000, console=0x100000,
                        pmsg=0x200000)
           s_dump = STOCK["size"] - STOCK["console"] - STOCK["pmsg"]
@@ -1177,9 +1200,10 @@ jobs:
           s_zone = (s_dump // s_cnt) & ~1
           st_console = base + s_cnt * s_zone
           st_pmsg = st_console + STOCK["console"]
-          if ec_addr != st_pmsg:
-              fail.append("earlycon at 0x%x but the recovery's pmsg prz (its only "
-                          "unconditional reader) is at 0x%x" % (ec_addr, st_pmsg))
+          if not (st_pmsg <= ec_addr and ec_addr + ec_size <= st_pmsg + STOCK["pmsg"]):
+              fail.append("earlycon 0x%x+0x%x is outside the recovery's pmsg prz "
+                          "(0x%x+0x%x), the one zone it reads without its own console "
+                          "writer behind it" % (ec_addr, ec_size, st_pmsg, STOCK["pmsg"]))
           if record != STOCK["record"]:
               fail.append("record-size 0x%x differs from the recovery's 0x%x dmesg "
                           "przs, whose reader rejects a larger cursor"
@@ -1189,9 +1213,9 @@ jobs:
                           % (size, STOCK["size"]))
           if fail:
               sys.exit("ramoops geometry: " + "; ".join(fail))
-          print("ramoops: dmesg prz 0x%x+0x%x, console prz 0x%x+0x%x, ring 0x%x -- matches "
-                "earlycon=ramoops,0x%x,0x%x"
-                % (base, cnt * zone, caddr, console, console - 12, ec_addr, ec_size))
+          print("ramoops: dmesg prz 0x%x+0x%x, pmsg prz 0x%x+0x%x, ring 0x%x -- matches "
+                "earlycon=ramoops,0x%x,0x%x, and no console prz"
+                % (base, cnt * zone, paddr, pmsg, pmsg - 12, ec_addr, ec_size))
           PYEOF
           gdsc=/soc/qcom,gdsc@177004
           # The vendor gdsc-regulator must not probe raw-offset windows
@@ -1404,6 +1428,20 @@ jobs:
             echo '::error::earlycon_ramoops_write() must write size, then start, then the payload -- any other order leaves start > size across a reset, and the 4.14 recovery reader zaps a buffer it calls invalid'
             exit 1
           fi
+          # The earlycon is the log path, and two of its properties are not
+          # cosmetic: it must append to a surviving ring instead of resetting it
+          # (this device has no separate recovery kernel, so a reset at setup
+          # wipes the boot under test before the reader can copy it), and it must
+          # name the build it belongs to.  Both were earned with flash rounds.
+          early=$GITHUB_WORKSPACE/drivers/tty/serial/earlycon-ramoops.c
+          if ! grep -q 'readl_relaxed(&rbuf->sig) != PERSISTENT_RAM_SIG' "$early"; then
+            echo "::error::earlycon-ramoops.c must keep the previous boot's ring, resetting only a foreign or torn header"
+            exit 1
+          fi
+          if ! grep -q 'surya earlycon, new boot: ' "$early"; then
+            echo '::error::the earlycon must mark each boot with the banner, or an accumulated ring cannot be split per boot'
+            exit 1
+          fi
           kernel_id=$(gzip -cd Image.gz 2>/dev/null | strings -a | grep -m1 -o 'Linux version 6\.1\.177-surya-g[0-9a-f]*' || true)
           # A pull_request run builds refs/pull/N/merge, so the -g<sha> the kernel
           # prints is that merge commit, not the branch head.  Print both: the
@@ -1451,6 +1489,53 @@ jobs:
         with:
           name: Surya-6.1-TWRP-BOOT-TEST-RAMOOPS
           path: ${{ runner.temp }}/Surya-6.1-TWRP-BOOT-TEST-RAMOOPS.zip
+          if-no-files-found: error
+          retention-days: 7
+      - name: Package the pstore log collector
+        # Same rule as the two zips above: only built for a labelled test PR.
+        # It exists in CI because the collector had been a hand-built artifact, so
+        # a round could not say which script had copied the prz -- and decoding a
+        # capture without knowing its reader is how capture 14 got read as "the
+        # kernel printed nothing".  The stamp file is the answer to that.
+        if: contains(github.event.pull_request.labels.*.name, 'surya-twrp-test')
+        run: |
+          set -e
+          work=$(mktemp -d)
+          trap 'rm -rf -- "$work"' EXIT
+          pin=41f04bdb4ee30a44e429c2c1131d5e8bb32b15f1
+          curl -fsSL --retry 2 "https://codeload.github.com/osm0sis/AnyKernel3/tar.gz/$pin" -o "$work/ak3.tar.gz"
+          mkdir "$work/installer"
+          tar -xzf "$work/ak3.tar.gz" -C "$work/installer" --strip-components=1
+          cd "$work/installer"
+          # Every path below is anchored: this cwd is a temp directory that is not
+          # the repository, so a relative tools/... would copy nothing and zip an
+          # empty installer instead of a collector (the rule scripts/dtc/surya-workflow-lint.py
+          # now enforces across this job).
+          cp "$GITHUB_WORKSPACE/tools/surya-anykernel/collect-logs.sh" anykernel.sh
+          sh -n anykernel.sh
+          for want in 'pmsg-ramoops-*' 'pstore-index.txt' 'console-ramoops-*'; do
+            if ! grep -q -- "$want" anykernel.sh; then
+              echo "::error::the collector must handle $want"
+              echo '::error::pmsg is the only prz the boot under test writes alone; the index is what tells a compressed prz from a silent boot (Documentation/arm64/surya-bringup.rst)'
+              exit 1
+            fi
+          done
+          if [ "$(git -C "$GITHUB_WORKSPACE" rev-list --parents -n1 HEAD | wc -w)" -gt 2 ]; then
+            head_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD^2 2>/dev/null || echo "$GITHUB_SHA")
+            stamp_kind=pull-request-merge
+          else
+            head_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD 2>/dev/null || echo "$GITHUB_SHA")
+            stamp_kind=checkout
+          fi
+          printf 'collector=head=%s\n# stamp=%s\n' "$head_sha" "$stamp_kind" > SURYA-VERSION
+          sha256sum anykernel.sh > SURYA-SHA256SUMS
+          zip -q -r "$RUNNER_TEMP/Surya-6.1-TWRP-LOG-COLLECTOR.zip" META-INF tools LICENSE anykernel.sh SURYA-SHA256SUMS SURYA-VERSION
+          unzip -tq "$RUNNER_TEMP/Surya-6.1-TWRP-LOG-COLLECTOR.zip"
+      - uses: actions/upload-artifact@v4
+        if: contains(github.event.pull_request.labels.*.name, 'surya-twrp-test')
+        with:
+          name: Surya-6.1-TWRP-LOG-COLLECTOR
+          path: ${{ runner.temp }}/Surya-6.1-TWRP-LOG-COLLECTOR.zip
           if-no-files-found: error
           retention-days: 7
       - name: Report compiler cache statistics

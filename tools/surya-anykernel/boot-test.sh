@@ -72,6 +72,17 @@ patch_cmdline 'softlockup_panic=' 'softlockup_panic=1';
 # initcall_debug is not patched on any more: one line per probe and per initcall
 # wraps the 2 MiB console ramoops prz mid-boot (capture 11 came back interleaved
 # with the next boot).  gcc_sm6150_probe() prints its own stage markers instead.
+#
+# The address below is the whole log path, so it is worth stating why it is the
+# pmsg prz and not the console prz (see Documentation/arm64/surya-bringup.rst):
+# if /reserved-memory/ramoops@9d800000 declares console-size at all, every boot
+# of this kernel -- including the TWRP boot that comes to read the log -- calls
+# pstore_register() with PSTORE_FLAGS_CONSOLE, which (a) untethers this earlycon
+# ~0.2 s later, truncating the boot under test, and (b) writes the reading boot's
+# own records into the same ring.  With CONFIG_PSTORE_DEFLATE_COMPRESS_DEFAULT=y
+# those records are zlib, which is what console-ramoops-14.txt was: 14225 bytes,
+# 38 % printable, no DEFLATE stream start anywhere, no line long enough for
+# strings -n 14.  pmsg has no kernel writer, so the ring survives to be copied.
 grep -Eq '^cmdline=.*earlycon=ramoops,0x9da00000,0x40000( |$)' "$SPLITIMG/header" ||
   abort 'Log argument missing; nothing written.';
 # What the kernel actually runs with is the cmdline in the boot header, not the
@@ -85,4 +96,5 @@ grep -Eq '^cmdline=.*clk_ignore_unused( |$)' "$SPLITIMG/header" ||
 flash_boot;
 flash_generic dtbo;
 ui_print 'On boot loop, return directly to TWRP and run Surya-TWRP-Log-Collector.zip before restoring.';
+ui_print 'Send pmsg-ramoops-0.txt (the boot log) plus pstore-index.txt; console-ramoops-* is the reader, not us.';
 ui_print 'If Android does not boot, restore the matching FSociety Boot and DTBO backups in TWRP.';

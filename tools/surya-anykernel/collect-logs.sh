@@ -12,7 +12,7 @@ device.name1=surya
 # Use the recovery installer UI, but never source the boot flashing core.
 ui_print() { printf 'ui_print %s\nui_print\n' "$*" > "/proc/self/fd/$OUTFD"; }
 collect() {
-  local dir src count;
+  local dir src count f total printable pct first;
   dir=$(mktemp -d "$1/surya-boot-logs.XXXXXX") || return 1;
   count=0;
   # Some recovery builds leave the pstore filesystem unmounted.
@@ -25,6 +25,20 @@ collect() {
   for src in /sys/fs/pstore/dmesg-ramoops-* /sys/fs/pstore/console-ramoops-* /sys/fs/pstore/pmsg-ramoops-* /sys/fs/pstore/ftrace-ramoops-*; do
     [ -s "$src" ] || continue;
     if cp "$src" "$dir/${src##*/}"; then count=$((count + 1)); fi;
+  done;
+  # Say which copy is a kernel log and which is a compressed blob, in the bundle
+  # itself.  A capture that looks empty in `head` is usually a prz whose writer
+  # was a pstore console with CONFIG_PSTORE_DEFLATE_COMPRESS_DEFAULT=y, not a
+  # silent boot -- and that distinction has cost a whole flash round twice.
+  for f in "$dir"/*ramoops*; do
+    [ -s "$f" ] || continue;
+    total=$(wc -c < "$f" | tr -dc '0-9');
+    printable=$(tr -dc '[:print:]\n' < "$f" | wc -c | tr -dc '0-9');
+    pct=0;
+    [ "${total:-0}" -gt 0 ] && pct=$((100 * printable / total));
+    first=$(head -n 1 "$f" | cut -c1-48);
+    printf '%s %s/%s printable=%s%% | %s\n' "$(basename "$f")" "$printable" "$total" \
+      "$pct" "$first" >> "$dir/pstore-index.txt";
   done;
   if cat /proc/last_kmsg > "$dir/last_kmsg.txt" 2>/dev/null && [ -s "$dir/last_kmsg.txt" ]; then
     count=$((count + 1));
@@ -111,6 +125,7 @@ collect() {
   grep -aiE 'console-ramoops|pmsg-ramoops|dmesg-ramoops|ramoops' /cache/recovery/log /tmp/recovery.log /dev/null 2>/dev/null | tail -200 > "$dir/recovery-pstore-trace.txt" 2>/dev/null;
   ls -la /cache/recovery /data/recovery >> "$dir/recovery-pstore-trace.txt" 2>&1;  dmesg > "$dir/twrp-current-dmesg.txt" 2>/dev/null;
   printf 'Previous boot files copied: %s\ntwrp-current-dmesg.txt is from recovery, not the failed kernel.\n' "$count" > "$dir/README.txt";
+  printf 'Send pmsg-ramoops-0.txt plus pstore-index.txt: that is the boot under test.\nA file with printable near 38%% is a compressed prz, not an empty boot -- see\nDocumentation/arm64/surya-bringup.rst.\n' >> "$dir/README.txt";
   sync;
   ui_print "Previous boot files copied: $count";
   ui_print "Report saved in $dir";
