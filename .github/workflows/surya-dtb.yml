@@ -63,14 +63,19 @@ jobs:
             echo 'Discovery must stay out of the primary Surya DTB during offline audit' >&2
             exit 1
           fi
+          # No ramoops geometry is asserted here, on purpose.  The
+          # address the earlycon must be aimed at is a derived quantity
+          # (ramoops_probe lays the dmesg przs out first), so it is checked
+          # only where it is derived -- in the zip-assembling step, which
+          # recomputes console-prz start/size from this same node.  This
+          # step used to restate 'reg = 0 9d800000 0 400000' and
+          # console-size 100000 as literals; those four lines then sat
+          # quietly stale for four builds, passing while the earlycon aimed
+          # at a prz the 4.14 reader rejected as invalid.  A literal here
+          # would only re-create the disagreement, so check existence.
           pstore=/reserved-memory/ramoops@9d800000
-          test "$(fdtget -t x "$dtb" "$pstore" reg)" = '0 9d800000 0 400000'
-          # The recovery's 4.14 ramoops reader exports this exact prz
-          # layout; the zero-owned variants captured nothing.  The
-          # earlycon rides in the pmsg zone (base + 2 MiB).
-          test "$(fdtget -t x "$dtb" "$pstore" record-size)" = '80000'
-          test "$(fdtget -t x "$dtb" "$pstore" pmsg-size)" = '200000'
-          test "$(fdtget -t x "$dtb" "$pstore" console-size)" = '100000'
+          test -n "$(fdtget -t x "$dtb" "$pstore" reg)"
+          fdtget "$dtb" "$pstore" no-map >/dev/null
           for node in /soc/ufshc@1d84000 /soc/ufsphy_mem@1d87000 \
                       /soc/ssusb@a600000 /soc/hsusb@a800000; do
             test "$(fdtget -t s "$dtb" "$node" status)" = disabled
@@ -265,7 +270,15 @@ jobs:
           test "$(fdtget -t s "$dtb" /soc/remoteproc-cdsp@0x8300000 status)" = disabled
           test "$(fdtget -t x "$dtb" "$reserved/splash_region" reg)" = '0 9c000000 0 1700000'
           test "$(fdtget -t x "$dtb" "$reserved/dfps_data_region@9d700000" reg)" = '0 9d700000 0 100000'
-          test "$(fdtget -t x "$dtb" "$reserved/ramoops@9d800000" reg)" = '0 9d800000 0 400000'
+          # The audit overlay includes surya-sm6150.dts, so it must carry
+          # the board DTB's ramoops node unchanged -- including whatever
+          # geometry the deriving step enforces.  Compare, never restate:
+          # the literal 0x400000 that used to sit here was stale for four
+          # builds without ever failing anything, because only this copy of
+          # the tree had been updated.
+          board_dtb=out/surya/arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dtb
+          test "$(fdtget -t x "$dtb" "$reserved/ramoops@9d800000" reg)" = \
+            "$(fdtget -t x "$board_dtb" "$reserved/ramoops@9d800000" reg)"
           for old in wlan_msa_region@93900000 dfps_data_region@9cf00000 disp_rdump_region@9c000000; do
             if fdtget "$dtb" "$reserved/$old" reg >/dev/null 2>&1; then
               echo "Offline layout must not retain $old" >&2
@@ -1073,6 +1086,11 @@ jobs:
 
           NODE = "/reserved-memory/ramoops@9d800000"
 
+          # fdtget -t x prints unprefixed hex ("9d800000"), which int(tok, 0) rejects,
+          # and some builds print "0x9d800000", which int(tok, 16) accepts.  Parse both.
+          def num(tok):
+              return int(tok[2:], 16) if tok[:2].lower() == "0x" else int(tok, 16)
+
           def prop(name, default=None):
               out = subprocess.run(["fdtget", "-t", "x", "dtb", NODE, name],
                                    capture_output=True, text=True)
@@ -1080,23 +1098,23 @@ jobs:
                   if default is None:
                       sys.exit("%s has no %s: %s" % (NODE, name, out.stderr.strip()))
                   return default
-              return int(out.stdout.split()[0], 0)
+              return num(out.stdout.split()[0])
 
           region = subprocess.run(["fdtget", "-t", "x", "dtb", NODE, "reg"],
                                   capture_output=True, text=True).stdout.split()
           # #address-cells/#size-cells are 2 here: "0 9d800000 0 240000",
           # so the low halves are the third and the last token.
           if len(region) >= 4:
-              base, size = int(region[-3], 0), int(region[-1], 0)
+              base, size = num(region[-3]), num(region[-1])
           else:
-              base, size = int(region[-2], 0), int(region[-1], 0)
+              base, size = num(region[-2]), num(region[-1])
 
           root = os.environ.get("GITHUB_WORKSPACE", ".")
           installer = open(root + "/tools/surya-anykernel/boot-test.sh").read()
           m = re.search(r"earlycon=ramoops,(0x[0-9a-f]+),(0x[0-9a-f]+)", installer)
           if not m:
               sys.exit("boot-test.sh must name the ramoops earlycon zone")
-          ec_addr, ec_size = int(m.group(1), 0), int(m.group(2), 0)
+          ec_addr, ec_size = num(m.group(1)), num(m.group(2))
 
           console = prop("console-size")
           ftrace = prop("ftrace-size", 0)
@@ -1376,7 +1394,19 @@ jobs:
           # (head b2529a124 + base 4ae872acf) and looked, for a minute, like a
           # wrong zip.  The head sha below is what a report has to be matched to.
           printf '%s\n' "${kernel_id:-Linux version unknown}" > SURYA-VERSION
-          printf 'head=%s\n' "${{ github.event.pull_request.head.sha || github.sha }}" >> SURYA-VERSION
+          # Deliberately no Actions expression on these lines: this run block
+          # is large and an expression inside it is rejected past its length
+          # limit.  A pull_request run checks out refs/pull/N/merge, whose first
+          # parent is the branch head -- the sha a report has to be matched to --
+          # while a push run has already checked the head out directly.
+          if [ "$(git rev-list --parents -n1 HEAD | wc -w)" -gt 2 ]; then
+            head_sha=$(git rev-parse HEAD^1)
+            stamp_kind=pull-request-merge
+          else
+            head_sha=$(git rev-parse HEAD)
+            stamp_kind=checkout
+          fi
+          printf 'head=%s\n# stamp=%s\n' "$head_sha" "$stamp_kind" >> SURYA-VERSION
           sha256sum Image.gz dtb dtbo.img > SURYA-SHA256SUMS
           sh -n anykernel.sh
           if ! grep -q 'SURYA-VERSION' anykernel.sh; then

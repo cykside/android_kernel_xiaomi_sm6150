@@ -1247,6 +1247,11 @@ configuration ever shown to deliver a complete boot log from the real
 device; the boot-side changes since then (skip-qos guard, RPMh
 propagation, UFS unwind) are kept.
 
+Superseded by the geometry section at the end of this file: reproducing
+b6b0c60b4's *window* is not enough, because 6.1 lays that window out as
+dmesg records first, so 0x9da00000 became the last dmesg zone rather
+than a console prz.
+
 
 GDSC raw-offset landmine and the clean-204s boot
 -------------------------------------------------
@@ -1860,8 +1865,8 @@ real ``core_clk`` -> ``scsi 0:0:0:0: Attached scsi generic sg0`` ->
 ``enabled; driver assigned`` but the host still reports ``-517``, the provider
 ordering -- not the PHY -- is what is left.
 
-Why a boot can leave no capture, and what now guarantees one
-----------------------------------------------------
+Why a boot can leave no capture, and what the retained window is for
+--------------------------------------------------------------------
 
 The round after ``fb3fd29ca`` came back with an empty ``/sys/fs/pstore``.  That
 is not a collector bug and it is not bad luck; it is a property of how this
@@ -1874,9 +1879,13 @@ reaches that reboot; the only way out is holding the power key, which is a hard
 PON reset, and DDR is gone.  Nothing to read, no matter how much of the buffer
 was written.
 
-Two changes make a capture unconditional while the board is in bring-up, and
-neither is a boot fix -- they exist so the next round cannot be lost.  Read the
-correction below this section before trusting the first bullet on its own:
+Two changes raise the chance that a round leaves a readable capture, and
+neither is a boot fix -- they exist so the next round is less likely to be
+thrown away.  Neither of them should be quoted as a guarantee: read the
+correction below this section before trusting either bullet on its own, and
+remember that the flash loop's empty ``/sys/fs/pstore`` was *not* lost to a hard
+reset (the header signature survived, so the bytes did) -- see the geometry
+section further down.
 
 * ``softlockup_panic=1``, in ``/chosen`` and in the installer.  The soft lockup
   detector is already built into this kernel (``CONFIG_SOFTLOCKUP_DETECTOR=y``
@@ -2300,3 +2309,55 @@ hit to its Makefile symbol, requires that symbol to be ``y`` in the resolved
 config, and requires the calibration table of the header that driver includes to
 still hold the 88 entries stock holds.  A future switch to another v3/v4 file
 would have to come with a deliberate edit to this number, not with a config tweak.
+
+
+The five flash loops were not lost to the reset -- the reader threw them away
+-----------------------------------------------------------------------------
+
+The follow-up to the PHY finding, and it came out of arithmetic rather than out of
+the field: with the window still mis-derived, five flashes left ``/sys/fs/pstore``
+empty, and the conclusion recorded at the time was that a forced power-key reset
+takes DDR down with it.  The recovery log disproves that, in one line::
+
+  pmic_persistent_ram: found existing invalid buffer, size 57821, start 192977
+
+That message is inside the signature check:
+
+.. code-block:: c
+
+  sig ^= PERSISTENT_RAM_SIG;
+  if (prz->buffer->sig == sig) {
+          if (buffer_size(prz) == 0 && buffer_start(prz) == 0) ... /* empty */
+          if (buffer_size(prz) > prz->buffer_size ||
+              buffer_start(prz) > buffer_size(prz))
+                  pr_info("found existing invalid buffer, size %zu, start %zu\n", ...);
+
+so the 4.14 reader *recognised* our header -- the writer and the reader agree on
+the layout (both trees use ``sig / start / size`` as three u32s, both xor the same
+``PERSISTENT_RAM_SIG``), 57821 bytes of real log were there, and the rejection was
+purely ``start > size``.  Bytes survive a hard PON reset well enough; the geometry
+did not.  Two consequences:
+
+* the empty ``pstore`` of those five rounds is *this* bug, not a power-delivery
+  fact, so do not quote it as evidence that a hung boot cannot be captured at
+  all -- that question is still open, and ``reboot=warm`` is still inert here
+  (no ``PSCI_SYSTEM_RESET2``), so a warm reboot with retained DDR remains the
+  only demonstrated path;
+* a header whose ``start``/``size`` pair is inconsistent is what a *second*
+  writer over the same pages looks like, which is exactly what the derived
+  6.1 layout did to the console prz.  No change to the earlycon's own locking or
+  flush order could have fixed that, which is why the fix is the node's sizes.
+
+  The arithmetic that names the second owner: derived from the old node (reg
+  ``0x400000``, record ``0x80000``, console ``0x100000``, pmsg ``0x200000``),
+  ``ramoops_probe()`` puts the two dmesg przs at ``0x9d800000`` and
+  ``0x9d900000``, the *console* prz at ``0x9d900000 + 0x100000`` -- so the
+  earlycon, aimed at ``0x9da00000``, was writing into the **pmsg** prz, which
+  ``ramoops_probe()`` owns and resets.  That is why ``size`` came back small
+  while ``start`` did not: one writer advanced the cursor, the other re-wrote
+  the header.  With ``pmsg-size = <0>`` nobody else has that prz, and the gate
+  asserts the derived console address rather than a guessed one.
+
+This is why the ramoops node is now derived in ``.dts`` text and gated rather than
+tuned: the whole defect was "sizes copied from a kernel whose layout order differs",
+and the gate re-derives ``start``/``size`` from the same arithmetic the driver uses.
