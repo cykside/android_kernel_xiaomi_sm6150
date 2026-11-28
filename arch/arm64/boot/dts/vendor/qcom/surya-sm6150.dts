@@ -21,103 +21,107 @@
 
 &reserved_memory {
 	/*
-	 * pstore geometry, derived from what the kernels that touch this region
-	 * actually do -- not guessed.  The rule this whole node encodes is short:
+	 * pstore geometry, taken from the only rounds of this bring-up that ever
+	 * produced a readable log, not from a theory.  Every line below is pinned
+	 * to a capture by .github/workflows/surya-dtb.yml.
 	 *
-	 * NOTHING THAT OWNS A prz MAY HOST THE LOG.
+	 * The kernel that reads these records back is the stock 4.14 recovery, and
+	 * it says what it declared in its own dmesg, identically in every round
+	 * (twrp-pstore-facts-2.txt .. twrp-pstore-facts-11.txt):
 	 *
-	 * persistent_ram_post_init() (fs/pstore/ram_core.c:528-568) starts with
+	 *	[    0.231385] console [pstore0] enabled
+	 *	[    0.231485] pstore: Registered ramoops as persistent store backend
+	 *	[    0.231500] ramoops: attached 0x400000@0x9d800000, ecc: 0/0
 	 *
-	 *	bool zap = !!(prz->flags & PRZ_FLAG_ZAP_OLD);
+	 * 0x400000 at 0x9d800000 with no ECC, which with the shared partitioning
+	 * rule (fs/pstore/ram.c: dump = size - console - ftrace - pmsg, cnt =
+	 * dump / record-size, zone = dump / cnt) and the vendor node
+	 * (sdmmagpie.dtsi:669, record 0x80000, console 0x100000, pmsg 0x200000)
+	 * lays out as
 	 *
-	 * and ramoops_init_prz() sets that flag for every prz it creates
-	 * (fs/pstore/ram.c:589).  On the "header looks valid" path it calls
-	 * persistent_ram_save_old() -- which copies the ring into a kernel buffer
-	 * for THIS boot's reader -- and then falls through to
+	 *	0x9d800000  dmesg prz 0   0x9d880000  dmesg prz 1
+	 *	0x9d900000  console prz   0x9da00000  pmsg prz
 	 *
-	 *	if (zap)
-	 *		persistent_ram_zap(prz);
+	 * MIRRORING that map is what makes a capture readable: the reader exports
+	 * the przs it knows about, at its addresses, and 4.14 has no
+	 * PRZ_FLAG_ZAP_OLD -- a valid header it finds is snapshotted with
+	 * persistent_ram_save_old() and left intact, which is why the same text is
+	 * still in the window after it has been read.  The rounds that mirrored it
+	 * are the rounds that worked:
 	 *
-	 * which writes start = size = 0 into the hardware header.  So the moment a
-	 * ramoops driver probes, the zone it owns belongs to it: the previous
-	 * contents survive only in that driver's own snapshot, and pstorefs erases
-	 * even the snapshot when the record's inode is evicted
-	 * (pstore_evict_inode -> psinfo->erase -> ramoops_pstore_erase,
-	 * fs/pstore/ram.c:434).  Two rules follow, and both were paid for in
-	 * flash rounds:
+	 *	console-ramoops-8.txt   26660 B  (build g108d1f6c6a9)
+	 *	console-ramoops-9.txt   57576 B  (build g94eb89742f3)
+	 *	console-ramoops-10.txt 234520 B  (build g832351361a00) -- whole boot,
+	 *	console-ramoops-13.txt  63076 B  (build g1f16c185f4a3)    ends at
+	 *	                          "[   36.975139] Rebooting in 5 seconds.."
 	 *
-	 *   1. our kernel may not own the log zone, or it zeroes the header 0.2 s
-	 *      into the very boot whose log we want -- that is why
-	 *      /sys/fs/pstore came back empty after the round that moved the zone
-	 *      from the console prz to the pmsg prz (2026-11-28, "tidak ada ramoops
-	 *      di sana");
-	 *   2. our kernel may not own the *console* prz either, because
-	 *      pstore_register() then adds a console of its own --
-	 *	[    0.227028] pstore: using zlib compression
-	 *	[    0.227539] console [pstore0] enabled
-	 *	[    0.227610] ramoops: attached 0x400000@0x9d800000, ecc: 0/0
-	 *      (twrp-current-dmesg-9.txt:152-155) -- which untethers our earlycon
-	 *      ~0.2 s in and writes its own DEFLATE records into the ring.  That
-	 *      is capture 14: 14225 bytes, 38 % printable, no DEFLATE stream start
-	 *      at any offset, no line for strings -n 14.  Not a silent boot: a
-	 *      capture of somebody else's compressed records.
+	 * That channel is plain text because pstore's *console* path is not the
+	 * compressed one: our kernel prints "pstore: Using crash dump compression:
+	 * deflate" for crash dumps only, so prz records of the dmesg type arrive
+	 * as deflate.  Reading those through the recovery is capture 14 -- 14225 B,
+	 * 39.2 % printable, header `====6.70<ts>-C` and no inflatable stream at any
+	 * offset or wbits -- and it is what our own dmesg prz #2 looked like when a
+	 * 0x240000 reg pushed it to 0x9d900000, the reader's console window.  A
+	 * mislabelled prz, not a silent boot.
 	 *
-	 * Hence: console-size 0 (no pstore console at all), pmsg-size 0 (no second
-	 * writer, and no prz of ours on the log), and a reg that covers the dmesg
-	 * przs ONLY.  The log itself lives in the sibling reservation below, which
-	 * has no compatible: it is carved out of System RAM and left alone.  The
-	 * only writer there is drivers/tty/serial/earlycon-ramoops.c, and the only
-	 * reader is whichever kernel the recovery boots -- for the stock 4.14 map
-	 * (sdmmagpie.dtsi:669: reg 0x400000, record 0x80000, console 0x100000,
-	 * pmsg 0x200000) that region is precisely its own pmsg prz, which is how
-	 * it gets exported as pmsg-ramoops-0 -- the file that carried readable text
-	 * in the rounds when it worked (pstore-mount-3.txt: 23467 bytes;
-	 * pstore-mount-4.txt: 187743 bytes).
+	 * The two rounds before this one came back with /sys/fs/pstore mounted and
+	 * empty (pstore-mount-6.txt) and the reader complaining about nothing, and
+	 * the reason is visible in the diff: both set console-size 0.  With no
+	 * console-size our kernel never calls pstore_register() with
+	 * PSTORE_FLAGS_CONSOLE, so nothing at all writes the prz the reader exports
+	 * as console-ramoops-0 -- the channel those four captures above came out
+	 * of.  The earlycon cannot replace it: pstore_register() untethers the
+	 * bootconsole ~0.2 s in, and everything after that lives only in the printk
+	 * ring buffer, which a pstore console is the only thing that copies to RAM.
 	 *
-	 * Geometry of the dmesg side, unchanged in effect: the 4.14 and 6.1 drivers
-	 * both lay przs out in the order dmesg, console, ftrace, pmsg and give the
-	 * dmesg set the whole leftover,
+	 * ECC stays 0.  That is the one deliberate difference from the vendor node,
+	 * which says 0x10, and the four readable rounds were built with that 0x10 --
+	 * which is why the reason is visible in their own text, three to four lines in:
 	 *
-	 *	dump_mem_sz = mem_size - console - ftrace - pmsg
-	 *	cnt         = dump_mem_sz / record-size
-	 *	zone_sz     = dump_mem_sz / cnt		(align_down 2)
+	 *	console-ramoops-9.txt	 3x  ramoops: uncorrectable error in header
+	 *	console-ramoops-10.txt	 4x  "     (first at 0.085229 s)
+	 *	console-ramoops-13.txt	 4x  "     (grep -n says lines 205-208)
+	 *	console-ramoops-8.txt	 0x  "     (the one round whose earlycon died first)
 	 *
-	 * so reg 0x200000 with record-size 0x80000 is four przs of exactly
-	 * 0x80000, 0x9d800000..0x9da00000: the first ends exactly where the log
-	 * reservation starts.  record-size 0x80000 is also what the recovery uses
-	 * for its own dmesg przs, so a panic record survives a reboot into TWRP
-	 * too, and ecc-size 0 because prz->buffer_size is zone - 12 - ecc while the
-	 * earlycon uses zone - 12: two owners of one header agree on capacity only
-	 * without ECC (and the reader prints "ecc: 0/0", so it has none either).
+	 * With ecc on, prz->buffer_size is zone - 12 - ecc_total with the parity tail
+	 * at buffer->data + buffer_size (fs/pstore/ram_core.c:216-219), and
+	 * persistent_ram_check_valid() rejects a zone that was written without parity:
+	 * fs/pstore/ram_core.c:249 is that pr_info.  So an ECC-enabled prz resets the
+	 * header of the ring the previous boot left behind -- deleting the only text
+	 * the earlycon exists to keep.  The reader declares no ECC either; its
+	 * `ecc: %d/%d` prints cxt->ecc_info.ecc_size and .block_size (4.14
+	 * fs/pstore/ram.c:878) and every round says 0/0.
 	 *
-	 * no-map on both nodes, like the other no-cache regions here: a cached
-	 * alias of a zone written through ioremap() is a capture that can read
-	 * back stale.
+	 * What ECC does NOT explain, and what an earlier draft of this comment claimed:
+	 * the zaps of rounds 1 and 11 ("found existing invalid buffer, size 52101,
+	 * start 52133" and "size 57821, start 192977").  Those numbers are prz
+	 * geometry, and both rounds had reg/console values that moved the geometry --
+	 * the same mistake the sizes above remove.
+	 *
+	 * no-map is absent here, matching the vendor node, which is not a claim to
+	 * have fixed anything.  The flashable DTB is assembled from the offline layers,
+	 * and arch/arm64/boot/dts/vendor/qcom/surya-sm6150-v2-test.dts:38 has added
+	 * `no-map;` to this very node since 3fd371679, so every capture so far -- the
+	 * four readable ones included -- came from a DTB that had it.  It stays that
+	 * way for now on purpose: one changed variable per flash round.  If this
+	 * round's capture comes back with a torn first line, that line of that file is
+	 * the next thing to delete, and nothing else is.
+	 *
+	 * The earlycon (tools/surya-anykernel/boot-test.sh,
+	 * earlycon=ramoops,0x9da00000,0x40000) points at the pmsg prz, whose only
+	 * other producer is /dev/pmsg0 from userspace -- which a board that never
+	 * mounts /vendor never reaches.  It is redundant on a boot that survives to
+	 * pstore_register (the console replays the whole log buffer from 0.0 s) and
+	 * it is the only record of one that does not.
 	 */
 	ramoops@9d800000 {
 		compatible = "ramoops";
-		no-map;
-		reg = <0x0 0x9d800000 0x0 0x00200000>;
+		reg = <0x0 0x9d800000 0x0 0x00400000>;
 		record-size = <0x80000>;
-		pmsg-size = <0x0>;
-		console-size = <0x0>;
+		pmsg-size = <0x200000>;
+		console-size = <0x100000>;
 		ecc-size = <0x0>;
 		max-reason = <4>;
-	};
-
-	/*
-	 * The boot-console ring.  Deliberately NOT a ramoops prz of this kernel --
-	 * see the note above -- and deliberately not merged into the node above:
-	 * ramoops_probe() hands the whole leftover of reg to the dmesg przs, so
-	 * any size here would be re-partitioned and the log zone would be moved
-	 * or claimed.  earlycon=ramoops,0x9da00000,0x40000 in
-	 * tools/surya-anykernel/boot-test.sh must name this address exactly, and
-	 * the CI gate in .github/workflows/surya-dtb.yml derives it from these
-	 * two nodes rather than trusting the literal.
-	 */
-	surya_log: ramoops-log@9da00000 {
-		no-map;
-		reg = <0x0 0x9da00000 0x0 0x00040000>;
 	};
 };
 

@@ -11,35 +11,44 @@
  *
  * The zone size defaults to 256K, the most a single early_ioremap() can map;
  * the address has no default at all, so an image flashed without the installer's
- * patched cmdline gets no earlycon and writes nothing.  Give it a zone that is
- * NOT a prz of this kernel -- on surya that is a bare no-map reservation,
- * /reserved-memory/ramoops-log@9da00000, which happens to be the same window
- * the recovery's own ramoops driver calls pmsg.  Every word of that sentence
- * was bought with a flash round:
+ * Give the zone the recovery kernel's own geometry, and let it be a prz of
+ * ours: on surya that is the pmsg prz at 0x9da00000 inside
+ * /reserved-memory/ramoops@9d800000, which arch/arm64/boot/dts/vendor/qcom/
+ * surya-sm6150.dts now lays out to match the recovery exactly.  That is a
+ * change of mind, bought with a flash round, and the cost is stated below
+ * rather than hidden:
  *
- *   - Any prz of ours on this zone is snapshotted and then RESET at our own
- *     probe: ramoops_init_prz() passes PRZ_FLAG_ZAP_OLD (fs/pstore/ram.c:589),
- *     and persistent_ram_post_init() starts with "bool zap = !!(prz->flags &
- *     PRZ_FLAG_ZAP_OLD)" and falls through to persistent_ram_zap() even on the
- *     "header looks valid" path (fs/pstore/ram_core.c:532-567).  That writes
- *     start = size = 0 into the header right here -- 0.2 s into the very boot
- *     whose log we want -- and the reader then finds an empty prz:
- *     /sys/fs/pstore returns "total 0", not even an "invalid buffer" complaint
- *     (pstore-mount-6.txt, the round after the zone was moved onto pmsg).
- *   - The capacity still has to agree with the reader's, and ecc-size has to
- *     stay 0, because prz->buffer_size is zone - 12 - ecc while this driver uses
- *     zone - 12: two owners of one header only agree without ECC, and a reader
- *     that calls a header invalid erases it (capture 11, 2026-11-27 20:16:
- *     "found existing invalid buffer, size 57821, start 192977").
+ *   - Any prz of ours is snapshotted and then RESET at our own probe:
+ *     ramoops_init_prz() passes PRZ_FLAG_ZAP_OLD (fs/pstore/ram.c:589) and
+ *     persistent_ram_post_init() falls through to persistent_ram_zap() even on
+ *     the "header looks valid" path (fs/pstore/ram_core.c:527-568).  So on a
+ *     boot that lives past pstore_register() (~0.2 s) the text this console
+ *     wrote is erased from the ring.  It is not lost, because the pstore console
+ *     then replays the whole printk buffer from 0.000000 s into its own prz --
+ *     and that channel, the reader's console prz, is where every readable capture
+ *     of this bring-up came from: console-ramoops-8.txt, -9.txt, -10.txt (whole
+ *     boot, "Rebooting in 5 seconds.." last line) and -13.txt, 100 % printable
+ *     from byte 0, none of them containing a single line of this earlycon
+ *     (grep -c 'surya earlycon' says 0 in all four).
+ *   - The value of this console is therefore exactly the boot that never
+ *     reaches pstore_register(): hung before 0.2 s, panic inside an early init
+ *     call, a watchdog that fires before userspace.  For that boot nothing else
+ *     writes the prz, so the ring it fills survives untouched into the next
+ *     boot, which is what the takeover logic below is for.
+ *   - The capacity has to be what the reader computes for the same window.  It
+ *     attaches with `ecc: 0/0`, so its prz->buffer_size is zone - 12 and this
+ *     driver's rbuf_size is zone - 12 too; the DT keeps ecc-size 0 for the same
+ *     reason, because with ecc-size 0x10 our own probe prints "uncorrectable
+ *     error in header" once per prz (three to four times at 0.085 s in
+ *     console-ramoops-9.txt, -10.txt and -13.txt) and resets the ring here.
  *
- * The kernel that reads this back is the stock 4.14 recovery kernel, which the
- * captures themselves prove -- "pstore: using zlib compression" and "ramoops:
- * attached 0x400000@0x9d800000, ecc: 0/0" are lines that exist only in that
- * tree (this one prints "Using crash dump compression: %s" and has no "attached"
- * line at all).  Its own console prz ends exactly where this ring starts, so
- * console-ramoops-0 is *its* log, zlib-compressed: capture 14 was 14225 bytes at
- * 38 % printable with no DEFLATE stream start at any offset.  The file that
- * carries this boot's text is pmsg-ramoops-0.
+ * The kernel that reads this back is the stock 4.14 recovery, which the captures
+ * themselves prove -- "pstore: using zlib compression" and "ramoops: attached
+ * 0x400000@0x9d800000, ecc: 0/0" exist only in that tree; this one prints
+ * "pstore: Using crash dump compression: %s" and has no "attached" line at all.
+ * 4.14 also has no PRZ_FLAG_ZAP_OLD, so a valid header it finds is snapshotted
+ * with persistent_ram_save_old() and left intact: the same text is still in the
+ * window after it has been read, which is why re-running the collector is free.
  */
 
 #include <linux/console.h>
@@ -152,10 +161,11 @@ static int __init earlycon_ramoops_setup(struct earlycon_device *dev,
 	 * of the boot that was about to read it.  Appending instead costs a ring
 	 * shared by a few boots, and the banner below is what splits them again.
 	 *
-	 * That is also the difference between this zone and a prz: any prz of
-	 * ours is snapshotted and then zapped at our own probe, which is why the
-	 * round that moved the ring onto a pmsg prz came back with an empty
-	 * /sys/fs/pstore.
+	 * The zap our own prz gets (PRZ_FLAG_ZAP_OLD, header comment above) is
+	 * why a boot that survives to pstore_register() loses this ring: its
+	 * header is reset at ~0.2 s and the pstore console's own prz is what
+	 * survives.  A boot that dies before that never reaches the zap, and
+	 * that is the boot this console exists for.
 	 *
 	 * Only a header this driver could have written is kept: anything else --
 	 * a foreign signature, a size past this zone's capacity, start > size --

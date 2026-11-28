@@ -15,6 +15,45 @@ collect() {
   local dir src count f total printable pct first;
   dir=$(mktemp -d "$1/surya-boot-logs.XXXXXX") || return 1;
   count=0;
+  # What the *running* device tree actually says about the pstore region, plus
+  # the chosen bootargs.  This is the answer to a question no capture has been
+  # able to settle: whether the DTB this project edits is the DTB the board boots
+  # with.  Nine rounds of reasoning about geometry have been done against
+  # arch/arm64/boot/dts/vendor/qcom/surya-sm6150.dts while the file that decides
+  # is /proc/device-tree, and the two differ in at least one property today
+  # (surya-sm6150-v2-test.dts:38 adds no-map to the flashable DTB).  Cells are
+  # 32-bit big-endian; TWRP has no python, so od plus awk is the decoder.
+  dtbase=${DTBASE:-/proc/device-tree}
+  {
+    echo "# device-tree facts from the boot that collected this"
+    echo "# cmdline: $(cat /proc/cmdline 2>/dev/null)"
+    echo "# chosen/bootargs: $(tr '\0' ' ' < "$dtbase/chosen/bootargs" 2>/dev/null)"
+    for node in $(ls "$dtbase/reserved-memory" 2>/dev/null | grep -i ramoops); do
+      echo "/reserved-memory/$node"
+      for prop in reg record-size console-size pmsg-size ecc-size max-reason; do
+        f="$dtbase/reserved-memory/$node/$prop"
+        if [ -r "$f" ]; then
+          printf '  %-14s %s\n' "$prop" \
+            "$(od -An -v -tx1 "$f" |
+                 awk '{ for (i = 1; i <= NF; i++)
+                          b[++n] = $i
+                        }
+                        END { for (i = 1; i + 3 <= n; i += 4)
+                                printf "0x%s%s%s%s ", b[i], b[i+1], b[i+2], b[i+3]
+                              print "" }')"
+        else
+          printf '  %-14s absent\n' "$prop"
+        fi
+      done
+      # no-map is a zero-length property: its existence is the whole value.
+      if [ -e "$dtbase/reserved-memory/$node/no-map" ]; then
+        echo '  no-map        present'
+      else
+        echo '  no-map        absent'
+      fi
+    done
+  } > "$dir/dtb-geometry.txt" 2>&1;
+
   # Some recovery builds leave the pstore filesystem unmounted.
   # Mounting it does not write Boot, DTBO or erase persistent records.
   if ! grep -q ' /sys/fs/pstore pstore ' /proc/mounts; then
