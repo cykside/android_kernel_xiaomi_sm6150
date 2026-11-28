@@ -126,7 +126,7 @@ jobs:
             drivers/usb/dwc3/dwc3-msm-core.o \
             drivers/iio/adc/qcom-spmi-adc5.o \
             drivers/ufs/host/ufs-qcom.o \
-            drivers/phy/qualcomm/phy-qcom-ufs-qmp-v3.o \
+            drivers/phy/qualcomm/phy-qcom-ufs-qmp-v4.o \
             drivers/regulator/qpnp-lcdb-regulator.o \
             drivers/video/backlight/qcom-spmi-wled.o \
             drivers/gpio/gpiolib.o \
@@ -980,7 +980,11 @@ jobs:
           test "$(fdtget -t s dtb /psci method)" = smc
           test "$(fdtget -t s dtb "$rsc/drv@2/clock-controller" compatible)" = qcom,sm6150-rpmh-clk
           test "$(fdtget -t s dtb "$host" compatible)" = qcom,ufshc
-          test "$(fdtget -t s dtb "$phy" compatible)" = qcom,ufs-phy-qmp-v3
+          # This line demanded the string that left the PHY unbound, so it is now
+          # the guard for the fix: the node must name a driver this configuration
+          # actually builds (qcom,ufs-phy-qmp-v3 matched nothing -- see the note in
+          # surya-sm6150.dts and console-ramoops-13.txt).
+          test "$(fdtget -t s dtb "$phy" compatible)" = qcom,ufs-phy-qmp-v4
           test "$(fdtget -t x dtb "$host" phys)" = "$(fdtget -t x dtb "$phy" phandle)"
           # Preserve the contiguous FSociety splash, DFPS and pstore ranges.
           test "$(fdtget -t x dtb /reserved-memory/splash_region reg)" = '0 9c000000 0 1700000'
