@@ -64,15 +64,36 @@
 	 * 0x240000 reg pushed it to 0x9d900000, the reader's console window.  A
 	 * mislabelled prz, not a silent boot.
 	 *
-	 * The two rounds before this one came back with /sys/fs/pstore mounted and
-	 * empty (pstore-mount-6.txt) and the reader complaining about nothing, and
-	 * the reason is visible in the diff: both set console-size 0.  With no
-	 * console-size our kernel never calls pstore_register() with
-	 * PSTORE_FLAGS_CONSOLE, so nothing at all writes the prz the reader exports
-	 * as console-ramoops-0 -- the channel those four captures above came out
-	 * of.  The earlycon cannot replace it: pstore_register() untethers the
-	 * bootconsole ~0.2 s in, and everything after that lives only in the printk
-	 * ring buffer, which a pstore console is the only thing that copies to RAM.
+	 *
+	 * Why console-size is not negotiable, in the tree's own words and in the
+	 * captures'.  ramoops_init_prz() returns at fs/pstore/ram.c:570 when the
+	 * size it was handed is 0, so with console-size 0 no prz exists at
+	 * 0x9d900000 and pstore_register() has no console to register -- and the
+	 * pstore console is the only writer of that window.  Every readable round
+	 * shows it happening, in the log of our own kernel:
+	 *
+	 *	console-ramoops-10.txt  [    0.000000][    T0] printk: bootconsole
+	 *	                                   [ramoops0] enabled
+	 *	console-ramoops-10.txt  [    0.265985][    T1] printk: console
+	 *	                                   [ramoops-1] enabled
+	 *
+	 * `ramoops-1' is that console, not a second earlycon: pstore_console takes
+	 * the backend's name (fs/pstore/platform.c:513 strscpy(pstore_console.name,
+	 * psinfo->name)) and this backend is "ramoops" (fs/pstore/ram.c:442), with
+	 * .index = -1 -- hence the -1 that upstream would print as `pstore0'.  It
+	 * registers with CON_PRINTBUFFER, so the replay from 0.000000 s is what
+	 * puts the whole boot into the prz, and it is why losing the earlycon's own
+	 * ring at ~0.1 s costs nothing on a boot that survives that long.
+	 *
+	 * One correction to the record, because the file said more than it does:
+	 * an earlier draft of this comment claimed the round before this one came
+	 * back with a mounted and *empty* /sys/fs/pstore.  That "total 0" listing is
+	 * pstore-mount-6.txt, whose suffix belongs to an older upload round, not to
+	 * the console-size-0 build.  What that round actually left behind is
+	 * console-ramoops-14.txt -- 14225 B, 39.2 % printable, our own deflate
+	 * dmesg records seen through the reader's console window, because the
+	 * shrunk reg moved prz #2 onto 0x9d900000.  The sizes are the bug either
+	 * way; the empty mount was not its observed symptom.
 	 *
 	 * ECC stays 0.  That is the one deliberate difference from the vendor node,
 	 * which says 0x10, and the four readable rounds were built with that 0x10 --
@@ -225,9 +246,14 @@
  * not at all.  With panic the reboot is the *panic* reboot -- warm, so DDR
  * survives -- the buffer ends with "BUG: soft lockup - CPU#N stuck for 22s!"
  * plus that CPU's backtrace, and the collector reads it after.  It also fixes
- * the failure mode seen on 2026-11-28 23:5x, where the boot hung somewhere
- * with no panic and no reboot at all, the user held the power key, and a hard
- * reset drops DDR: /sys/fs/pstore came back empty and the round was lost.
+ * the failure mode of the five rounds whose only listing is "total 0"
+ * (pstore-mount.txt, -2.txt .. -6.txt): those boots hung with no panic and no
+ * reboot, the user held the power key, and the round was lost -- but not to a
+ * DDR drop, which is what this comment used to claim.  The recovery's own dmesg
+ * says what happened instead: "found existing invalid buffer, size 52101, start
+ * 52133" and "size 57821, start 192977", i.e. the header our writer left was
+ * rejected and the prz erased.  See "The five flash loops were not lost to the
+ * reset" in Documentation/arm64/surya-bringup.rst.
  */
 &chosen {
 	bootargs = "kpti=0 ssbd=force-off qcom_dma_heaps.enable_bitstream_contig_heap=y rcupdate.rcu_expedited=0 cpufreq.default_governor=performance fw_devlink=permissive cpuidle.off=1 loglevel=8 clk_ignore_unused softlockup_panic=1";

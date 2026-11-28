@@ -2393,7 +2393,8 @@ derived, and the mechanism is the pstore *console* rather than the pmsg prz.
 
 The board was reflashed with the derived node (reg ``0x240000`` at ``0x9d800000``,
 record ``0x80000``, console ``0x40000``, pmsg ``0``, ecc ``0``, ``no-map``) and came
-back with ``console-ramoops-14.txt``: 14225 bytes, 38 % printable, ``strings -n 14``
+back with ``console-ramoops-14.txt``: 14225 bytes, 39.2 % printable (measured with
+the same ratio the collector prints), ``strings -n 14``
 finding no line, no ``Linux version`` and no ``Surya bringup`` marker.  It is not an
 empty boot::
 
@@ -2490,18 +2491,33 @@ Round 15: the node mirrors the reader, and the gate checks two DTBs
 
 The design above -- an unowned sibling reservation for the log zone, with
 ``console-size`` and ``pmsg-size`` set to 0 so that nothing of ours could erase it
--- was flashed as ``8c4a78f01a01`` and it is retracted.  It produced exactly what
-the section above predicted for the *previous* round: ``/sys/fs/pstore`` mounted,
-``total 0``, and no complaint anywhere in the reader's log
-(``pstore-mount-6.txt``, ``twrp-pstore-facts-11.txt``).  The prediction was wrong
-because the mechanism it named (``PRZ_FLAG_ZAP_OLD`` erasing a prz of ours) is not
-what made the earlier captures readable.  What made them readable was our own
-pstore *console* writing into the prz the recovery exports as
-``console-ramoops-0``, and ``console-size = <0>`` deletes that writer:
-``ramoops_init_prz()`` returns at ``fs/pstore/ram.c:570`` without registering
-anything when the size is 0, so from ~0.23 s on -- when ``pstore_register()``
-untethers the bootconsole -- no copy of the log buffer reaches RAM at all.  The
-earlycon cannot replace it, because it is untethered for exactly that reason.
+-- was flashed as ``8c4a78f01a01`` and it is retracted -- and the sentence that
+justified the retraction needs correcting in the same breath, because it repeated a
+mis-citation this file has carried for four rounds.
+
+What the round actually left behind was *not* an empty mount: the only ``-14``
+upload is ``console-ramoops-14.txt``, 14225 B at 39.2 % printable, and ``-12`` is
+``console-ramoops-12.txt``, 66728 B at 94.7 % printable with its first line torn
+(``ma!pgol\nA    0. 0000 ...``).  Both are the reader's console window at
+``0x9d900000`` being occupied by *our dmesg* prz -- in round 14 because
+``reg = <0 0x9d800000 0 0x200000>`` left ``dump = 0x200000`` to be divided into
+four ``0x80000`` przs, in round 12 because a ``pmsg-size`` of ``0x40000`` made
+``zone`` ``0x89d70`` and slid prz #2 to ``0x9d912380``.  Deflate records and a
+torn head, in other words, not a silent board.
+
+The ``total 0`` listings that both this file and the node comment quoted as the
+symptom are ``pstore-mount.txt`` and ``pstore-mount-2.txt`` through
+``pstore-mount-6.txt`` -- rounds 2 to 6, which predate the earlycon entirely, and
+they were being cited for a build from round 14.  What is true at source level,
+and what still justifies the mirror, is this pair: ``ramoops_init_prz()`` returns
+at ``fs/pstore/ram.c:570`` when the size it is handed is 0, so ``console-size =
+<0>`` means our kernel has no console prz at all and cannot be the one writing
+``0x9d900000``; and every readable capture of this bring-up (``-8``, ``-9``,
+``-10``, ``-13``: 100 % printable from byte 0, text starting at
+``[    0.000000]``) came from the node whose boundaries are the reader's, whose
+own dmesg przs therefore sit on the reader's dmesg window and nowhere else.  A
+geometry that shifts those boundaries by one ``record-size`` is enough to put
+compressed bytes in the file a human is asked to read.
 
 So the node is the reader's map again, in ``surya-sm6150.dts``, and the earlycon's
 ring deliberately shares the reader's pmsg prz::
@@ -2588,7 +2604,7 @@ boot and erases the mount, which is what ``moved-stat-10.txt`` shows (26823 B an
 move, not of an empty ring, so ``collect-logs.sh`` copies those destinations too,
 decompresses them, and prints a printable-ratio line per file with an explicit
 verdict -- ``empty prz`` for 0 B, ``overwritten by the reader's own compressed
-records`` near 38 % printable (the ratio capture 14 measured), ``readable``
+records`` near 39 % printable (the ratio capture 14 measured), ``readable``
 otherwise.  Measured across every upload so far, that ratio is the fastest single
 check on whether a capture is worth reading: 8, 9, 10 and 13 are 100 % printable
 from byte 0, 14 is 39.2 %, and 11 and 12 sit near 94 % with a torn head.

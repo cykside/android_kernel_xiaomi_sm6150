@@ -152,7 +152,17 @@ want nomap ok "no-map present"
 # reader's log to complain about: fs/pstore/ram.c returns before registering a
 # pstore console, so nothing copies the printk buffer to RAM at all.
 mutant console0 '/console-size/s/<0x100000>/<0x0>/'
-want console0 reject "never registers a pstore console"
+# Both halves of the needle are required, because they are the two separate
+# damages one console-size 0 does: our kernel loses its console prz writer
+# (fs/pstore/ram.c:570 returns early) *and* the freed space is folded into the
+# dmesg zones, sliding our deflate records onto the reader's console window --
+# which is the file console-ramoops-14.txt actually was.
+want console0 reject "returns before"
+"$python" "$check" "$work/console0.dtb" 2>&1 | grep -q "dmesg prz set is 4" || {
+	echo "FATAL: console0 must also be rejected for moving the dmesg przs" >&2
+	exit 1
+}
+pass=$((pass + 1))
 
 # (Both reg mutants spell the whole `s#old#new#` rather than `addr;s//new/`,
 # because the reused RE is the address pattern, which spans `reg = <...>`, and

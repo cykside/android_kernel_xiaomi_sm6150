@@ -164,7 +164,7 @@ collect() {
   grep -aiE 'console-ramoops|pmsg-ramoops|dmesg-ramoops|ramoops' /cache/recovery/log /tmp/recovery.log /dev/null 2>/dev/null | tail -200 > "$dir/recovery-pstore-trace.txt" 2>/dev/null;
   ls -la /cache/recovery /data/recovery >> "$dir/recovery-pstore-trace.txt" 2>&1;  dmesg > "$dir/twrp-current-dmesg.txt" 2>/dev/null;
   printf 'Previous boot files copied: %s\ntwrp-current-dmesg.txt is from recovery, not the failed kernel.\n' "$count" > "$dir/README.txt";
-  printf 'Send pmsg-ramoops-0.txt plus pstore-index.txt: that is the boot under test.\nA file with printable near 38%% is a compressed prz, not an empty boot -- see\nDocumentation/arm64/surya-bringup.rst.\n' >> "$dir/README.txt";
+  printf 'Send console-ramoops-0.txt, pmsg-ramoops-0.txt, pstore-index.txt and\ndtb-geometry.txt.  console-ramoops-0 is the channel that has always carried this\nboard'\''s text (the pstore console replays the log buffer from [    0.000000] when it\nregisters at ~0.27 s); pmsg-ramoops-0 holds only what the earlycon wrote before\nour own probe zapped that prz, so it can be short or empty while the boot is\nfully captured in the other file.  Judge a file by its printable ratio:\n100%% from byte 0 is a boot log; ~94%% with a torn first line is a prz boundary\nthat moved; ~39%% is deflate dmesg records (console-ramoops-14.txt measured\n39.2%%) and means the geometry, not the silence, is the problem.\nSee Documentation/arm64/surya-bringup.rst.\n' >> "$dir/README.txt";
   # The installer records what it flashed; a report that carries it cannot be
   # mistaken for an earlier round, which the 2026-11-28 misread did to us.
   for stamp in /sdcard/Surya-boot/last-flashed.txt /persist/Surya-last-flashed.txt; do

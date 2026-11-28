@@ -163,16 +163,19 @@ def check(dtb, boot_test=None):
                      "exports przs at the *reader's* addresses, so any shift "
                      "makes our text land in a prz it calls by another name"
                      % (base, size, READER["base"], READER["size"]))
-    # console-size is the difference between a readable capture and an empty
-    # /sys/fs/pstore.  fs/pstore/ram.c returns before registering a console
-    # backend when it is zero, so nothing copies the log buffer to RAM once the
-    # bootconsole is untethered ~0.2 s in -- and the mount comes back empty with
-    # no error line anywhere (pstore-mount-6.txt + twrp-pstore-facts-11.txt).
+    # console-size is the difference between a readable capture and a window
+    # full of somebody else's bytes.  ramoops_init_prz() returns here when the
+    # size is 0, so our kernel has no console prz to write -- and the reader
+    # still exports 0x9d900000 as console-ramoops-0, now showing whatever our
+    # dmesg przs landed on: console-ramoops-14.txt (14225 B, 39.2 % printable,
+    # deflate records) and console-ramoops-12.txt (66728 B, 94.7 %, first line
+    # torn) are both that, from the two rounds that set console-size 0.
     if console == 0:
-        fail(errors, "console-size 0: our kernel never registers a pstore "
-                     "console, nothing writes the prz the recovery exports as "
-                     "console-ramoops-0, and the mount comes back empty with no "
-                     "complaint (pstore-mount-6.txt, twrp-pstore-facts-11.txt)")
+        fail(errors, "console-size 0: fs/pstore/ram.c:570 returns before "
+                     "creating the prz, so our kernel writes nothing at "
+                     "0x9d900000 while the reader still exports that window as "
+                     "console-ramoops-0 -- see console-ramoops-14.txt (39.2 % "
+                     "printable) and -12.txt (torn head)")
     elif console != READER["console"]:
         fail(errors, "console-size 0x%x != the reader's 0x%x: we would write one "
                      "window and it would read another" % (console, READER["console"]))

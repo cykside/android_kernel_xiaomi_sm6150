@@ -85,20 +85,33 @@ patch_cmdline 'softlockup_panic=' 'softlockup_panic=1';
 # wraps the 2 MiB console ramoops prz mid-boot (capture 11 came back interleaved
 # with the next boot).  gcc_sm6150_probe() prints its own stage markers instead.
 #
-# The address below is the whole log path, so state what owns what.  Two rules
-# and one fact, all of them paid for in flash rounds (Documentation/arm64/
-# surya-bringup.rst has the long version):
-#   1. the ramoops node must declare no console prz, or pstore_register() adds a
-#      console of its own ~0.2 s in, untethers this earlycon and writes its own
-#      records over the ring (capture 14: 14225 B, 38 % printable);
-#   2. it must declare no prz AT ALL on this zone, not even pmsg: a prz of ours
-#      gets snapshot-and-zapped at our own probe (PRZ_FLAG_ZAP_OLD, see
-#      fs/pstore/ram.c:589), which zeroes the ring header 0.2 s into the boot we
-#      are trying to capture -- that is why /sys/fs/pstore came back empty in
-#      pstore-mount-6.txt.  The zone is a bare no-map reservation instead.
-#   3. the reader is the stock 4.14 recovery kernel, and in its map this zone is
-#      the pmsg prz, so the file to read is pmsg-ramoops-0; its own console prz
-#      ends where our ring starts.
+# The address below is the whole log path, so state what owns what.  Three
+# facts, all of them bought in flash rounds (Documentation/arm64/
+# surya-bringup.rst has the long version, and scripts/dtc/surya-ramoops-check.py
+# is the gate that enforces the node's side of them):
+#   1. the ramoops node must mirror the recovery kernel's own map, because the
+#      reader exports przs at the addresses IT was given: reg 0x9d800000 +
+#      0x400000, record 0x80000, console 0x100000, pmsg 0x200000, ecc 0 -- the
+#      geometry that produced every readable capture (console-ramoops-8, -9,
+#      -10, -13, all 100 % printable from byte 0).  Shift the boundaries and the
+#      file a human is asked to read turns into our dmesg records instead:
+#      console-ramoops-14.txt is 14225 B at 39.2 % printable, -12.txt 66728 B
+#      with a torn first line, and both are our own deflate records sitting on
+#      the reader's console window after a shrunk reg moved them there.
+#   2. this zone is a prz of ours now -- with pmsg-size 0x200000 the earlycon
+#      lands on our pmsg prz -- so our own probe zaps its header at ~0.1 s
+#      (PRZ_FLAG_ZAP_OLD, fs/pstore/ram.c:589).  That is accepted, not hidden:
+#      the pstore console registers at ~0.27 s and replays the log buffer from
+#      [    0.000000] into the console prz, which is where the readable text has
+#      always come from.  What the zap does cost is any boot that dies between
+#      the two: its earlycon text is erased and nothing has been replayed yet.
+#      A round-12 attempt to avoid the zap by leaving the zone unowned instead
+#      deleted the writer in rule 1, so the mirror won.
+#   3. the reader is the stock 4.14 recovery kernel, and it prints its own map in
+#      every capture ("ramoops: attached 0x400000@0x9d800000, ecc: 0/0").  Read
+#      console-ramoops-0 for this boot's text and pmsg-ramoops-0 for what the
+#      earlycon had before the zap; dtb-geometry.txt says which device tree the
+#      board really booted, which is the assumption all of the above rests on.
 grep -Eq '^cmdline=.*earlycon=ramoops,0x9da00000,0x40000( |$)' "$SPLITIMG/header" ||
   abort 'Log argument missing; nothing written.';
 # What the kernel actually runs with is the cmdline in the boot header, not the
